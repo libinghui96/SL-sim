@@ -19,6 +19,10 @@ npm test         # 物理核心的单元测试
 npm run build    # 生产构建，输出到 dist/
 ```
 
+在线版本：<https://libinghui96.github.io/SL-sim/>（每次推送到 main 后由 GitHub Actions 自动构建发布）。
+
+自己托管：先 `npm run build`，再 `docker compose up -d`，网站在本机 9696 端口。之后更新只需重新构建，不用重启容器。
+
 ## 怎么开车
 
 左上角的“下一步”会根据当前状态提示该做什么。冷态起步的完整流程（与说明书一致）：

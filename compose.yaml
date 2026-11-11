@@ -1,0 +1,11 @@
+# Serves the production build (run `npm run build` first) on port 9696.
+services:
+  web:
+    image: nginx:alpine
+    container_name: sl-sim
+    restart: unless-stopped
+    ports:
+      - "9696:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
