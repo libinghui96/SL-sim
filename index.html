@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SL-sim · Aster D51 live steam</title>
+  </head>
+  <body>
+    <div id="view"></div>
+
+    <header id="top">
+      <strong>Aster D51 · 1 号轨 · 酒精烧</strong>
+      <span class="group">
+        <button id="presetCold">冷态开始</button>
+        <button id="presetHot">热态开始</button>
+      </span>
+      <label>模式
+        <select id="mode">
+          <option value="track">轨道</option>
+          <option value="rollers">滚轮台</option>
+        </select>
+      </label>
+      <label>时间倍率
+        <select id="timeScale">
+          <option value="1">1×</option>
+          <option value="5">5×</option>
+          <option value="20">20×</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="paused" /> 暂停</label>
+      <label><input type="checkbox" id="xray" /> 剖视</label>
+      <label>拖重 <input type="number" id="trainMass" min="0" max="40" step="1" value="0" /> kg</label>
+      <label>坡度 <input type="number" id="grade" min="-40" max="40" step="1" value="0" /> ‰</label>
+      <span id="clock"></span>
+    </header>
+
+    <aside id="controls" class="panel">
+      <h2>操作</h2>
+      <label class="slider">加减阀 <output id="regulatorOut"></output><input type="range" id="regulator" min="0" max="100" value="0" /></label>
+      <label class="slider">回动手柄（后退 ← 中立 → 前进） <output id="reverserOut"></output><input type="range" id="reverser" min="-100" max="100" value="100" /></label>
+      <label class="slider">通风阀 <output id="blowerOut"></output><input type="range" id="blower" min="0" max="100" value="0" /></label>
+      <label class="slider">燃料阀 <output id="fuelValveOut"></output><input type="range" id="fuelValve" min="0" max="100" value="0" /></label>
+      <label class="slider">旁通阀（0 = 轴泵全部给水） <output id="bypassOut"></output><input type="range" id="bypass" min="0" max="100" value="100" /></label>
+      <div class="row">
+        <label><input type="checkbox" id="drains" /> 气缸排水阀</label>
+        <label><input type="checkbox" id="fan" /> 烟囱通风机</label>
+        <label><input type="checkbox" id="blowdown" /> 锅炉排水阀</label>
+      </div>
+      <div class="row">
+        <button id="ignite">点火</button>
+        <button id="extinguish">熄火</button>
+        <button id="handPump">手摇泵</button>
+        <button id="whistle">汽笛</button>
+      </div>
+      <div class="row">
+        <button id="pushBack">← 推</button>
+        <button id="pushFwd">推 →</button>
+        <button id="fillFuel">加燃料</button>
+        <button id="fillTender">水柜加水</button>
+        <button id="fillOil">加油</button>
+      </div>
+      <h2>配气事件（当前回动位置）</h2>
+      <table id="events"></table>
+      <h2>配气与气缸剖面（左侧）</h2>
+      <canvas id="section" width="320" height="170"></canvas>
+    </aside>
+
+    <aside id="gauges" class="panel">
+      <h2>仪表</h2>
+      <div class="row">
+        <canvas id="pressure" width="150" height="150"></canvas>
+        <canvas id="glass" width="46" height="150"></canvas>
+        <div id="warnings"></div>
+      </div>
+      <table id="readouts"></table>
+      <h2>示功图（左缸：实线前端，虚线后端）</h2>
+      <canvas id="indicator" width="320" height="170"></canvas>
+    </aside>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

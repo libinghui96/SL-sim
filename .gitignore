@@ -1,0 +1,4 @@
+node_modules
+dist
+# vendor manuals (Aster Hobby copyright), kept locally only
+docs/
