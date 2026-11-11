@@ -234,8 +234,8 @@ export class Diagrams {
         this.ring[1][i] = b;
       }
     }
-    const R = Math.min(68, (H - 70) / 2);
-    const cx = x0 + R + 12;
+    const R = Math.min(68, (H - 86) / 2);
+    const cx = x0 + R + 24;
     const cy = 28 + R;
     g.lineCap = 'butt';
     this.ring.forEach((states, end) => {
@@ -260,14 +260,18 @@ export class Diagrams {
     g.beginPath();
     g.arc(cx + (R - 28) * 0.6 * Math.cos(a), cy + (R - 28) * 0.6 * Math.sin(a), 3, 0, 2 * Math.PI);
     g.fill();
-    g.fillStyle = DIM;
-    g.textAlign = 'center';
-    g.fillText('曲柄', cx, cy + 4);
+    // dead centres, labelled outside the ring
+    g.strokeStyle = g.fillStyle = DIM;
+    g.lineWidth = 1.5;
+    line(g, { x: cx + R + 2, y: cy }, { x: cx + R + 7, y: cy });
+    line(g, { x: cx - R - 2, y: cy }, { x: cx - R - 7, y: cy });
+    g.textAlign = 'left';
+    g.fillText('前', cx + R + 9, cy + 4);
+    g.textAlign = 'right';
+    g.fillText('后', cx - R - 9, cy + 4);
     g.textAlign = 'left';
     g.fillStyle = TEXT;
     g.fillText('配气相位（外圈前端 / 内圈后端）', x0 + 8, 14);
-    g.fillStyle = DIM;
-    g.fillText('前死点 →', cx + R + 4, cy + 4);
 
     let lx = x0 + 8;
     const ly = cy + R + 18;
@@ -278,8 +282,10 @@ export class Diagrams {
       g.fillText(name, lx + 13, ly);
       lx += 46;
     }
+    g.fillStyle = DIM;
+    g.fillText('白线：曲柄位置；前 / 后：前、后死点', x0 + 8, ly + 16);
 
-    const tx = cx + R + 8;
+    const tx = cx + R + 26;
     const mm = (x: number) => (x * 1e3).toFixed(2);
     const deg = ((((a * 180) / Math.PI) % 360) + 360) % 360;
     const rows = [
@@ -439,10 +445,16 @@ export class Diagrams {
 
     // labels
     g.textBaseline = 'alphabetic';
-    tag('mainRod', mid(pose.crankPin, pose.crosshead), 0, 18);
+    // keep these two labels on opposite sides: the rods cross each other during a revolution
+    const mMain = mid(pose.crankPin, pose.crosshead);
+    const mEcc = mid(pose.eccPin, pose.linkTail);
+    const eccAbove = mEcc.y >= mMain.y;
+    tag('mainRod', mMain, 0, eccAbove ? 18 : -9);
+    tag('eccRod', mEcc, 0, eccAbove ? -8 : 17);
     tag('coupling', { x: LAYOUT.driverX[3] / 2 + pose.crankPin.x, y: pose.crankPin.y }, 0, -8);
-    tag('eccRod', mid(pose.eccPin, pose.linkTail), 0, -8);
-    tag('link', linkTop, 0, -9);
+    g.fillStyle = cssHex(PART_COLORS.link);
+    g.textAlign = 'center';
+    g.fillText(PART_LABELS.link + '（支点固定）', X(linkTop.x), Y(linkTop.y) - 9);
     tag('radiusRod', mid(pose.dieBlock, pose.leverMid), 6, -8);
     tag('lever', mid(pose.leverMid, pose.leverBottom), 8, 4, 'left');
     tag('union', mid(pose.leverBottom, pose.dropPin), 0, 16);
@@ -456,7 +468,6 @@ export class Diagrams {
     g.fillStyle = DIM;
     g.textAlign = 'center';
     g.fillText('气缸 / 活塞', X(x0), Y(-bore - WALL) + 14);
-    g.fillText('月牙板支点（固定）', pv.x, pv.y + 22);
 
     g.fillStyle = TEXT;
     g.textAlign = 'left';
@@ -590,11 +601,11 @@ export class Diagrams {
     note(sim.safetyOpen ? '安全阀开' : '安全阀', 290, 12, sim.safetyOpen ? '#f85149' : DIM);
     note('酒精 ' + burnMl.toFixed(1) + ' mL/min', 177, 198, cssHex(C.fuel));
     note('传给水 ' + watts(sim.heatToWater), 428, 164, heat, 'left');
-    note('烟气带走 ' + watts(flueLoss), 585, 234, cssHex(C.gas));
+    note('烟气带走 ' + watts(flueLoss), 545, 234, cssHex(C.gas));
     note('散热 ' + watts(sim.boilerLoss), 246, 30, DIM, 'right');
     note('排汽', 701, 118, DIM);
     note('活塞功', 664, 164, '#e3b341', 'left');
-    note(c.fan ? '通风机抽风' : '排汽 / 通风阀抽风', 730, 196, DIM, 'right');
+    note(c.fan ? '通风机抽风' : '排汽 / 通风阀抽风', 722, 232, DIM, 'right');
 
     const pct = (a: number, base: number) => (base > 1 ? ((100 * a) / base).toFixed(1) + '%' : '–');
     note(
