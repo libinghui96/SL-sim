@@ -69,9 +69,15 @@ export class LocoSim {
   safetyFlow = 0;
   drainFlow = 0;
   feedFlow = 0;
+  /** axle pump delivery before the bypass split [kg/s] */
+  pumpFlow = 0;
   tractiveForce = 0;
   indicatedPower = 0;
   slip = 0;
+  /** heat balance [W]: released by the burner, absorbed by the water, lost from the boiler surface */
+  firePower = 0;
+  heatToWater = 0;
+  boilerLoss = 0;
 
   steamUsed = 0;
   waterFed = 0;
@@ -105,6 +111,9 @@ export class LocoSim {
     this.tenderWater = 0.8 * p.feed.tenderCapacity;
     this.oil = 0.8;
     this.time = this.distance = this.steamUsed = this.waterFed = this.fuelBurned = 0;
+    this.fireGain = this.superheat = this.firePower = this.heatToWater = this.boilerLoss = 0;
+    this.exhaustFlow = this.steamFlow = this.blowerFlow = this.safetyFlow = this.drainFlow = this.feedFlow = this.pumpFlow = 0;
+    this.tractiveForce = this.indicatedPower = this.slip = 0;
   }
 
   /** In steam at 3.5 kgf/cm2 with warm cylinders, ready to pull away. */
@@ -118,8 +127,11 @@ export class LocoSim {
     this.controls.blower = 0.3;
   }
 
-  ignite(): void {
-    if (this.fuel > 0 && this.controls.fuelValve > 0) this.lit = true;
+  ignite(): 'ok' | 'noFuel' | 'valveClosed' {
+    if (this.fuel <= 0) return 'noFuel';
+    if (this.controls.fuelValve <= 0) return 'valveClosed';
+    this.lit = true;
+    return 'ok';
   }
 
   extinguish(): void {
@@ -257,7 +269,8 @@ export class LocoSim {
     const mBlowdown = c.blowdown && gauge > 0 ? b.blowdownCdA * Math.sqrt((2 * gauge) / this.boiler.props.vf) * dt : 0;
 
     // feed water: axle pump (less what the bypass returns to the tender) and hand pump
-    const feedVol = Math.min(this.tenderWater, this.revAcc * p.feed.axlePumpPerRev * (1 - c.bypass) + this.handPending);
+    const pumpVol = this.tenderWater > 0 ? this.revAcc * p.feed.axlePumpPerRev : 0;
+    const feedVol = Math.min(this.tenderWater, pumpVol * (1 - c.bypass) + this.handPending);
     this.revAcc = 0;
     this.handPending = 0;
     this.tenderWater -= feedVol;
@@ -284,7 +297,10 @@ export class LocoSim {
     this.superheat = b.superheatMax * Math.min(1, this.fireGain);
     // heating surface is only effective where it is wetted
     const wetted = Math.min(1, this.boiler.fill / 0.35);
-    const heat = burn * bu.lhv * bu.efficiency * wetted - b.lossUA * (T - p.ambientT) * dt;
+    this.firePower = (burn * bu.lhv) / dt;
+    this.heatToWater = this.firePower * bu.efficiency * wetted;
+    this.boilerLoss = b.lossUA * (T - p.ambientT);
+    const heat = (this.heatToWater - this.boilerLoss) * dt;
 
     this.boiler.apply(heat, this.steamAcc + mBlower + mWhistle + mSafety, mBlowdown, mFeed, p.ambientT);
 
@@ -296,6 +312,7 @@ export class LocoSim {
     this.blowerFlow = mBlower / dt;
     this.safetyFlow = mSafety / dt;
     this.feedFlow += (mFeed / dt - this.feedFlow) * k;
+    this.pumpFlow += ((pumpVol * RHO_WATER) / dt - this.pumpFlow) * k;
     this.steamAcc = this.exhaustAcc = this.drainAcc = 0;
   }
 }

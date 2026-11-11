@@ -1,7 +1,9 @@
-import { portOpenings, type PortOpenings } from '../sim/engine';
 import type { LocoSim, Mode, Warning } from '../sim/loco';
 import { KGF_CM2, P_ATM } from '../sim/steam';
-import { pressureCss } from './colors';
+import { cssHex, prepareCanvas } from './colors';
+import { Diagrams, type DockTab } from './diagrams';
+import { FLOW_COLORS, FLOW_LEGEND } from './flow';
+import type { ViewMode } from './locoModel';
 import type { LocoView } from './scene';
 
 export interface AppState {
@@ -26,13 +28,15 @@ type SliderKey = 'regulator' | 'reverser' | 'blower' | 'fuelValve' | 'bypass';
 type ToggleKey = 'drains' | 'fan' | 'blowdown';
 const SLIDERS: SliderKey[] = ['regulator', 'reverser', 'blower', 'fuelValve', 'bypass'];
 const TOGGLES: ToggleKey[] = ['drains', 'fan', 'blowdown'];
+const DOCK_HEIGHT = 312;
 
 export class Panel {
   private readonly readouts: [string, () => string][];
   private readonly cells: HTMLElement[] = [];
-  private readonly open: PortOpenings = { admFront: 0, admBack: 0, exhFront: 0, exhBack: 0 };
+  private readonly diagrams: Diagrams;
   private eventsFor = NaN;
   private frame = 0;
+  private toastTimer = 0;
 
   constructor(
     private readonly sim: LocoSim,
@@ -51,7 +55,13 @@ export class Panel {
       const input = $<HTMLInputElement>(key);
       input.addEventListener('change', () => (c[key] = input.checked));
     }
-    $('ignite').addEventListener('click', () => sim.ignite());
+    $('ignite').addEventListener('click', () => {
+      const result = sim.ignite();
+      if (result === 'valveClosed') this.toast('点不着：燃料阀还关着。先把“燃料阀”开到约 50%，再点火。');
+      else if (result === 'noFuel') this.toast('点不着：酒精箱是空的，先点“加燃料”。');
+      else if (!c.fan && c.blower === 0) this.toast('已点着。没有抽风时火很弱，冷态请勾选“烟囱通风机”。');
+      else this.toast('已点着。');
+    });
     $('extinguish').addEventListener('click', () => sim.extinguish());
     $('handPump').addEventListener('click', () => sim.handPump());
     $('pushFwd').addEventListener('click', () => sim.push(0.05));
@@ -76,20 +86,67 @@ export class Panel {
       this.syncControls();
     });
     const mode = $<HTMLSelectElement>('mode');
-    mode.addEventListener('change', () => {
-      sim.mode = mode.value as Mode;
-      sim.v = 0;
-    });
     const timeScale = $<HTMLSelectElement>('timeScale');
-    timeScale.addEventListener('change', () => (state.timeScale = Number(timeScale.value)));
     const paused = $<HTMLInputElement>('paused');
-    paused.addEventListener('change', () => (state.paused = paused.checked));
-    const xray = $<HTMLInputElement>('xray');
-    xray.addEventListener('change', () => view.setXray(xray.checked));
     const trainMass = $<HTMLInputElement>('trainMass');
-    trainMass.addEventListener('change', () => (sim.params.track.trainMass = Math.max(0, Number(trainMass.value) || 0)));
     const grade = $<HTMLInputElement>('grade');
-    grade.addEventListener('change', () => (sim.params.track.gradePermil = Number(grade.value) || 0));
+    // also run once at startup: a browser refresh restores form values without firing events
+    const applyRun = () => {
+      if (sim.mode !== mode.value) sim.v = 0;
+      sim.mode = mode.value as Mode;
+      state.timeScale = Number(timeScale.value);
+      state.paused = paused.checked;
+      sim.params.track.trainMass = Math.max(0, Number(trainMass.value) || 0);
+      sim.params.track.gradePermil = Number(grade.value) || 0;
+    };
+    for (const el of [mode, timeScale, paused, trainMass, grade]) el.addEventListener('change', applyRun);
+    applyRun();
+
+    // 3D view options
+    const viewMode = $<HTMLSelectElement>('viewMode');
+    const flow = $<HTMLInputElement>('flow');
+    const labels = $<HTMLInputElement>('labels');
+    const legend = $('legend');
+    for (const [key, text] of FLOW_LEGEND) {
+      const item = legend.appendChild(document.createElement('span'));
+      item.textContent = text;
+      item.style.setProperty('--c', cssHex(FLOW_COLORS[key]));
+    }
+    const applyView = () => {
+      view.setView(viewMode.value as ViewMode, flow.checked, labels.checked);
+      legend.hidden = !flow.checked;
+    };
+    for (const el of [viewMode, flow, labels]) el.addEventListener('change', applyView);
+    applyView();
+    const explode = $<HTMLInputElement>('explode');
+    const applyExplode = () => view.setExplode(Number(explode.value) / 100);
+    explode.addEventListener('input', applyExplode);
+    applyExplode();
+
+    // diagram dock
+    this.diagrams = new Diagrams(sim, $<HTMLCanvasElement>('diagram'));
+    const dock = $('dock');
+    const tabs = [...dock.querySelectorAll<HTMLButtonElement>('button[data-tab]')];
+    const applyDock = () => {
+      const collapsed = dock.classList.contains('collapsed');
+      for (const t of tabs) t.classList.toggle('on', !collapsed && t.dataset.tab === this.diagrams.tab);
+      $('dockToggle').textContent = collapsed ? '展开' : '收起';
+      document.body.classList.toggle('dock-open', !collapsed);
+      view.setBottomInset(collapsed || dock.offsetParent === null ? 0 : DOCK_HEIGHT);
+    };
+    for (const t of tabs) {
+      t.addEventListener('click', () => {
+        this.diagrams.tab = t.dataset.tab as DockTab;
+        dock.classList.remove('collapsed');
+        applyDock();
+      });
+    }
+    $('dockToggle').addEventListener('click', () => {
+      dock.classList.toggle('collapsed');
+      applyDock();
+    });
+    window.addEventListener('resize', applyDock);
+    applyDock();
 
     const e = sim.engine;
     const b = sim.boiler;
@@ -105,7 +162,7 @@ export class Panel {
       ['指示功率', () => sim.indicatedPower.toFixed(1) + ' W'],
       ['耗汽量', () => (sim.steamFlow * 1e3).toFixed(3) + ' g/s'],
       ['给水量', () => (sim.feedFlow * 1e3).toFixed(3) + ' g/s'],
-      ['火力', () => (sim.lit ? (sim.fireGain * 100).toFixed(0) + ' %' : '未点火')],
+      ['火力', () => (sim.lit ? `${(sim.fireGain * 100).toFixed(0)} %（${sim.firePower.toFixed(0)} W）` : '未点火')],
       ['过热度', () => sim.superheat.toFixed(0) + ' K'],
       ['缸壁温度 左 / 右', () => `${(e.wallT[0] - 273.15).toFixed(0)} / ${(e.wallT[1] - 273.15).toFixed(0)} °C`],
       ['燃料', () => (sim.fuel * 1e6).toFixed(0) + ' mL'],
@@ -121,6 +178,14 @@ export class Panel {
     this.syncControls();
   }
 
+  private toast(text: string): void {
+    const el = $('toast');
+    el.textContent = text;
+    el.hidden = false;
+    window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => (el.hidden = true), 4500);
+  }
+
   private syncControls(): void {
     const c = this.sim.controls;
     for (const key of SLIDERS) {
@@ -131,19 +196,46 @@ export class Panel {
     for (const key of TOGGLES) $<HTMLInputElement>(key).checked = c[key];
   }
 
-  update(): void {
+  /** What the manual's procedure asks for next, given the current state. */
+  private nextStep(): string {
+    const s = this.sim;
+    const c = s.controls;
+    const p = s.boiler.gaugePressure / KGF_CM2;
+    const moving = Math.abs(s.omega) > 0.5;
+    if (s.fuel <= 0) return '燃料耗尽：点“加燃料”，再重新点火。';
+    if (!s.lit) {
+      if (p > 1) return '火已熄灭：燃料阀开到约 50% 后点“点火”；也可以靠余压继续行驶。';
+      if (c.fuelValve <= 0) return '第 1 步：把“燃料阀”开到约 50%。';
+      if (!c.fan) return '第 2 步：勾选“烟囱通风机”（冷态没有蒸汽，靠它抽风）。';
+      return '第 3 步：点“点火”。';
+    }
+    if (s.boiler.glass < 0.15) return '水位过低：关小“旁通阀”让轴泵给水，或点“手摇泵”。';
+    if (p < 1.5) return c.fan || c.blower > 0 ? '升压中…到 1.5–2 kgf/cm² 后改用通风阀。嫌慢可把时间倍率调到 20×。' : '火力很弱：冷态请勾选“烟囱通风机”抽风。';
+    if (c.fan) return '第 4 步：取消“烟囱通风机”，把“通风阀”开到约 30%，继续升压到 4 kgf/cm²。';
+    if (!moving) {
+      if (p < 3) return '继续升压到 3–4 kgf/cm²（通风阀约 30%）。';
+      if (c.regulator <= 0) return '第 5 步：勾选“气缸排水阀”，再慢慢打开“加减阀”（约 25–30%）起步。';
+      const wall = Math.min(s.engine.wallT[0], s.engine.wallT[1]) - 273.15;
+      if (wall < 95) return `暖缸中：蒸汽正在冷气缸里凝结（缸壁 ${wall.toFixed(0)} °C），热起来后才有力起步，约需半分钟；排水阀保持打开。`;
+      return '加减阀再开大一点；若停在死点附近，可点“推 →”。';
+    }
+    if (c.drains) return '第 6 步：凝水排净后取消“气缸排水阀”。';
+    return '运行中：加减阀控制速度；回动手柄拉向中立可省汽；调“旁通阀”把水位保持在 50% 左右。';
+  }
+
+  update(dt: number): void {
     const sim = this.sim;
     this.drawPressure();
     this.drawGlass();
     this.drawIndicator();
-    this.drawSection();
+    this.diagrams.update(dt);
     if (this.frame++ % 6 !== 0) return;
 
     this.readouts.forEach(([, value], i) => (this.cells[i].textContent = value()));
+    $('hint').textContent = this.nextStep();
     const t = Math.floor(sim.time);
     $('clock').textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')} · ${sim.distance.toFixed(1)} m`;
-    const warnings = $('warnings');
-    warnings.replaceChildren(
+    $('warnings').replaceChildren(
       ...sim.warnings().map((w) => {
         const s = document.createElement('span');
         s.textContent = WARNING_TEXT[w];
@@ -174,14 +266,14 @@ export class Panel {
   }
 
   private drawPressure(): void {
-    const cv = $<HTMLCanvasElement>('pressure');
-    const g = cv.getContext('2d')!;
-    const cx = cv.width / 2;
-    const cy = cv.height / 2;
+    const c = prepareCanvas($<HTMLCanvasElement>('pressure'));
+    if (!c) return;
+    const { g, w, h } = c;
+    const cx = w / 2;
+    const cy = h / 2;
     const R = cx - 8;
     const max = 6;
     const angle = (v: number) => Math.PI * 0.75 + (Math.min(max, Math.max(0, v)) / max) * Math.PI * 1.5;
-    g.clearRect(0, 0, cv.width, cv.height);
     g.lineWidth = 2;
     g.strokeStyle = '#8b949e';
     g.beginPath();
@@ -215,49 +307,50 @@ export class Panel {
   }
 
   private drawGlass(): void {
-    const cv = $<HTMLCanvasElement>('glass');
-    const g = cv.getContext('2d')!;
+    const c = prepareCanvas($<HTMLCanvasElement>('glass'));
+    if (!c) return;
+    const { g, w, h } = c;
     const top = 14;
-    const h = cv.height - 28;
+    const hh = h - 28;
     const level = Math.min(1, Math.max(0, this.sim.boiler.glass));
-    g.clearRect(0, 0, cv.width, cv.height);
     g.fillStyle = '#1f2933';
-    g.fillRect(16, top, 14, h);
+    g.fillRect(16, top, 14, hh);
     g.fillStyle = '#58a6ff';
-    g.fillRect(16, top + h * (1 - level), 14, h * level);
+    g.fillRect(16, top + hh * (1 - level), 14, hh * level);
     g.strokeStyle = '#c9d1d9';
-    g.strokeRect(16, top, 14, h);
+    g.lineWidth = 1;
+    g.strokeRect(16, top, 14, hh);
     g.beginPath();
-    g.moveTo(10, top + h / 2);
-    g.lineTo(36, top + h / 2);
+    g.moveTo(10, top + hh / 2);
+    g.lineTo(36, top + hh / 2);
     g.stroke();
     g.fillStyle = '#c9d1d9';
     g.font = '10px system-ui';
     g.textAlign = 'center';
-    g.fillText('水位', cv.width / 2, 10);
-    g.fillText((this.sim.boiler.glass * 100).toFixed(0) + '%', cv.width / 2, cv.height - 3);
+    g.fillText('水位', w / 2, 10);
+    g.fillText((this.sim.boiler.glass * 100).toFixed(0) + '%', w / 2, h - 3);
   }
 
+  /** Right-hand cylinder, matching the diagrams in the dock. */
   private drawIndicator(): void {
-    const cv = $<HTMLCanvasElement>('indicator');
-    const g = cv.getContext('2d')!;
+    const c = prepareCanvas($<HTMLCanvasElement>('indicator'));
+    if (!c) return;
+    const { g, w: cw, h: ch } = c;
     const e = this.sim.engine;
     const vMax = e.clearance + e.pistonArea * this.sim.params.engine.stroke;
     const x0 = 30;
-    const y0 = cv.height - 18;
-    const w = cv.width - x0 - 8;
+    const y0 = ch - 18;
+    const w = cw - x0 - 8;
     const h = y0 - 8;
     const pMax = 5;
     const X = (V: number) => x0 + (V / vMax) * w;
     const Y = (P: number) => y0 - (Math.max(-0.3, (P - P_ATM) / KGF_CM2) / pMax) * h;
-    g.clearRect(0, 0, cv.width, cv.height);
     g.strokeStyle = '#30363d';
     g.fillStyle = '#8b949e';
     g.font = '10px system-ui';
     g.textAlign = 'right';
     g.textBaseline = 'middle';
     g.lineWidth = 1;
-    g.setLineDash([]);
     for (let p = 0; p <= pMax; p++) {
       g.beginPath();
       g.moveTo(x0, Y(P_ATM + p * KGF_CM2));
@@ -266,7 +359,7 @@ export class Panel {
       g.fillText(String(p), x0 - 4, Y(P_ATM + p * KGF_CM2));
     }
     g.textAlign = 'center';
-    g.fillText('气缸容积 →', x0 + w / 2, cv.height - 7);
+    g.fillText('气缸容积 →', x0 + w / 2, ch - 7);
     g.strokeStyle = '#f0883e';
     g.beginPath();
     g.moveTo(x0, Y(this.sim.boiler.P));
@@ -277,94 +370,18 @@ export class Panel {
       g.strokeStyle = end === 0 ? '#58a6ff' : '#3fb950';
       g.setLineDash(end === 0 ? [] : [4, 3]);
       g.beginPath();
-      const P = e.indP[end];
-      const V = e.indV[end];
+      const P = e.indP[2 + end];
+      const V = e.indV[2 + end];
+      let started = false;
       for (let i = 0; i <= P.length; i++) {
         const k = i % P.length;
         if (V[k] === 0) continue;
-        if (i === 0) g.moveTo(X(V[k]), Y(P[k]));
-        else g.lineTo(X(V[k]), Y(P[k]));
+        if (started) g.lineTo(X(V[k]), Y(P[k]));
+        else g.moveTo(X(V[k]), Y(P[k]));
+        started = true;
       }
       g.stroke();
     }
     g.setLineDash([]);
-  }
-
-  /** Longitudinal section through the left cylinder and its slide valve. */
-  private drawSection(): void {
-    const cv = $<HTMLCanvasElement>('section');
-    const g = cv.getContext('2d')!;
-    const sim = this.sim;
-    const p = sim.params.engine;
-    const k = 7500;
-    const cx = cv.width / 2 + 12;
-    const cy = 112;
-    const X = (m: number) => cx + m * k;
-    const Y = (m: number) => cy - m * k;
-    const rect = (x0: number, y0: number, x1: number, y1: number) => g.fillRect(X(x0), Y(y1), (x1 - x0) * k, (y1 - y0) * k);
-
-    const pose = sim.gear.solve(sim.phi, sim.controls.reverser);
-    const xp = pose.piston;
-    const xv = pose.valve;
-    const r = p.stroke / 2;
-    const bore = p.bore / 2;
-    const pt = 0.0025;
-    const half = r + pt + 0.002;
-    const face = bore + 0.005;
-    const portIn = 0.002;
-    const portOut = portIn + p.portWidth;
-    const P = sim.engine.P;
-    const exhaust = pressureCss(P_ATM);
-    portOpenings(p, xv, this.open);
-
-    g.clearRect(0, 0, cv.width, cv.height);
-    // cylinder block
-    g.fillStyle = '#3d444d';
-    rect(-half - 0.002, -bore - 0.002, half + 0.002, face);
-    // steam spaces
-    g.fillStyle = pressureCss(P[0]);
-    rect(xp + pt, -bore, half, bore);
-    g.fillStyle = pressureCss(P[1]);
-    rect(-half, -bore, xp - pt, bore);
-    // passages from the port face to the cylinder ends
-    for (const s of [1, -1]) {
-      g.fillStyle = pressureCss(P[s === 1 ? 0 : 1]);
-      g.beginPath();
-      g.moveTo(X(s * portIn), Y(face));
-      g.lineTo(X(s * portOut), Y(face));
-      g.lineTo(X(s * half), Y(bore + 0.0015));
-      g.lineTo(X(s * half), Y(bore));
-      g.lineTo(X(s * (half - p.portWidth)), Y(bore));
-      g.closePath();
-      g.fill();
-    }
-    g.fillStyle = exhaust;
-    rect(-0.0008, bore + 0.002, 0.0008, face);
-    // piston and rod
-    g.fillStyle = '#c9d1d9';
-    rect(xp - pt, -bore, xp + pt, bore);
-    rect(-half - 0.012, -0.001, xp - pt, 0.001);
-    // steam chest and slide valve
-    g.fillStyle = pressureCss(sim.engine.chestP);
-    rect(-0.013, face, 0.013, face + 0.007);
-    const vOut = portOut + p.steamLap;
-    const vIn = portIn - p.exhaustLap;
-    g.fillStyle = '#c9a646';
-    rect(xv - vOut, face, xv + vOut, face + 0.0038);
-    g.fillStyle = exhaust;
-    rect(xv - vIn, face, xv + vIn, face + 0.002);
-    g.fillStyle = '#c9d1d9';
-    rect(-0.022, face + 0.0015, xv - vOut, face + 0.0023);
-
-    g.fillStyle = '#c9d1d9';
-    g.font = '10px system-ui';
-    g.textAlign = 'center';
-    g.fillText('后', X(-half) + 8, Y(-bore) + 14);
-    g.fillText('前', X(half) - 8, Y(-bore) + 14);
-    const o = this.open;
-    const mm = (x: number) => (x * 1e3).toFixed(1);
-    g.textAlign = 'left';
-    g.fillText(`进汽开度 前 ${mm(o.admFront)} / 后 ${mm(o.admBack)} mm`, 6, 12);
-    g.fillText(`排汽开度 前 ${mm(o.exhFront)} / 后 ${mm(o.exhBack)} mm`, 6, 25);
   }
 }

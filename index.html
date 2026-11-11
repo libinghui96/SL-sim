@@ -22,19 +22,36 @@
       </label>
       <label>时间倍率
         <select id="timeScale">
-          <option value="1">1×</option>
+          <option value="0.1">0.1×</option>
+          <option value="0.25">0.25×</option>
+          <option value="1" selected>1×</option>
           <option value="5">5×</option>
           <option value="20">20×</option>
         </select>
       </label>
       <label><input type="checkbox" id="paused" /> 暂停</label>
-      <label><input type="checkbox" id="xray" /> 剖视</label>
       <label>拖重 <input type="number" id="trainMass" min="0" max="40" step="1" value="0" /> kg</label>
       <label>坡度 <input type="number" id="grade" min="-40" max="40" step="1" value="0" /> ‰</label>
+      <span class="sep"></span>
+      <label>视图
+        <select id="viewMode">
+          <option value="normal">外观</option>
+          <option value="xray">剖视</option>
+          <option value="mech">机构</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="flow" /> 流向</label>
+      <label><input type="checkbox" id="labels" /> 标注</label>
+      <label>拆解 <input type="range" id="explode" min="0" max="100" value="0" /></label>
       <span id="clock"></span>
     </header>
 
+    <div id="legend" hidden></div>
+    <div id="toast" hidden></div>
+
     <aside id="controls" class="panel">
+      <h2>下一步</h2>
+      <div id="hint"></div>
       <h2>操作</h2>
       <label class="slider">加减阀 <output id="regulatorOut"></output><input type="range" id="regulator" min="0" max="100" value="0" /></label>
       <label class="slider">回动手柄（后退 ← 中立 → 前进） <output id="reverserOut"></output><input type="range" id="reverser" min="-100" max="100" value="100" /></label>
@@ -61,21 +78,29 @@
       </div>
       <h2>配气事件（当前回动位置）</h2>
       <table id="events"></table>
-      <h2>配气与气缸剖面（左侧）</h2>
-      <canvas id="section" width="320" height="170"></canvas>
     </aside>
 
     <aside id="gauges" class="panel">
       <h2>仪表</h2>
       <div class="row">
-        <canvas id="pressure" width="150" height="150"></canvas>
-        <canvas id="glass" width="46" height="150"></canvas>
+        <canvas id="pressure"></canvas>
+        <canvas id="glass"></canvas>
         <div id="warnings"></div>
       </div>
       <table id="readouts"></table>
-      <h2>示功图（左缸：实线前端，虚线后端）</h2>
-      <canvas id="indicator" width="320" height="170"></canvas>
+      <h2>示功图（右缸：实线前端，虚线后端）</h2>
+      <canvas id="indicator"></canvas>
     </aside>
+
+    <section id="dock" class="panel">
+      <div class="tabs">
+        <button data-tab="section">气缸与滑阀</button>
+        <button data-tab="gear">配气机构</button>
+        <button data-tab="flow">汽水与热量</button>
+        <button id="dockToggle">收起</button>
+      </div>
+      <canvas id="diagram"></canvas>
+    </section>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
