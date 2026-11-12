@@ -29,6 +29,10 @@ type ToggleKey = 'drains' | 'fan' | 'blowdown';
 const SLIDERS: SliderKey[] = ['regulator', 'reverser', 'blower', 'fuelValve', 'bypass'];
 const TOGGLES: ToggleKey[] = ['drains', 'fan', 'blowdown'];
 const DOCK_HEIGHT = 312;
+/** width taken by each side panel on the wide layout, including its margin */
+const SIDE_PANEL = 352;
+/** Phones, tablets and small windows: keep in step with the media query in style.css. */
+const COMPACT = '(max-width: 1200px), (max-height: 600px)';
 
 export class Panel {
   private readonly readouts: [string, () => string][];
@@ -108,10 +112,14 @@ export class Panel {
     const labels = $<HTMLInputElement>('labels');
     const legend = $('legend');
     for (const [key, text] of FLOW_LEGEND) {
-      const item = legend.appendChild(document.createElement('span'));
+      const item = legend.appendChild(document.createElement('button'));
       item.textContent = text;
       item.style.setProperty('--c', cssHex(FLOW_COLORS[key]));
+      item.addEventListener('click', () => view.setFlowKind(key, !item.classList.toggle('off')));
     }
+    const tip = legend.appendChild(document.createElement('span'));
+    tip.className = 'tip';
+    tip.textContent = '点按可单独隐藏或显示';
     const applyView = () => {
       view.setView(viewMode.value as ViewMode, flow.checked, labels.checked);
       legend.hidden = !flow.checked;
@@ -127,12 +135,14 @@ export class Panel {
     this.diagrams = new Diagrams(sim, $<HTMLCanvasElement>('diagram'));
     const dock = $('dock');
     const tabs = [...dock.querySelectorAll<HTMLButtonElement>('button[data-tab]')];
+    const compact = window.matchMedia(COMPACT);
     const applyDock = () => {
-      const collapsed = dock.classList.contains('collapsed');
+      const collapsed = dock.classList.contains('collapsed') && !compact.matches;
       for (const t of tabs) t.classList.toggle('on', !collapsed && t.dataset.tab === this.diagrams.tab);
       $('dockToggle').textContent = collapsed ? '展开' : '收起';
-      document.body.classList.toggle('dock-open', !collapsed);
-      view.setBottomInset(collapsed || dock.offsetParent === null ? 0 : DOCK_HEIGHT);
+      // in the compact layout the view has its own area, nothing covers it
+      view.setBottomInset(collapsed || compact.matches ? 0 : DOCK_HEIGHT);
+      view.setSideInset(compact.matches ? 0 : SIDE_PANEL);
     };
     for (const t of tabs) {
       t.addEventListener('click', () => {
@@ -146,7 +156,31 @@ export class Panel {
       applyDock();
     });
     window.addEventListener('resize', applyDock);
+    compact.addEventListener('change', applyDock);
     applyDock();
+
+    // compact layout: one panel at a time in a sheet; tapping the current tab folds the sheet away
+    const body = document.body;
+    const sheetTabs = [...$('mtabs').querySelectorAll<HTMLButtonElement>('button[data-sheet]')];
+    const applySheet = () => {
+      const open = !body.classList.contains('sheet-closed');
+      for (const t of sheetTabs) t.classList.toggle('on', open && t.dataset.sheet === body.dataset.sheet);
+      $('sheetToggle').textContent = open ? '▾' : '▴';
+    };
+    for (const t of sheetTabs) {
+      t.addEventListener('click', () => {
+        const same = body.dataset.sheet === t.dataset.sheet && !body.classList.contains('sheet-closed');
+        body.dataset.sheet = t.dataset.sheet;
+        body.classList.toggle('sheet-closed', same);
+        applySheet();
+      });
+    }
+    $('sheetToggle').addEventListener('click', () => {
+      body.classList.toggle('sheet-closed');
+      applySheet();
+    });
+    body.dataset.sheet = 'controls';
+    applySheet();
 
     const e = sim.engine;
     const b = sim.boiler;

@@ -550,14 +550,12 @@ export class Diagrams {
     pipe('blower', [400, 38, 400, 20, 730, 20, 730, 28], boilerSteam, sim.blowerFlow, 5e-5, 2);
     pipe('safety', [290, 38, 290, 16], boilerSteam, sim.safetyFlow, 5e-4, 2);
     pipe('fuel', [104, 204, 250, 204], cssHex(C.fuel), sim.firePower, 1600);
-    for (const x of [290, 335, 380]) pipe('heat' + x, [x, 184, x, 136], heat, sim.heatToWater, 600);
-    pipe('flue', [420, 214, 440, 214, 440, 240, 730, 240, 730, 180], cssHex(C.gas), sim.lit ? flueLoss : 0, 1000);
     pipe('work', [659, 144, 659, 176], '#e3b341', Math.abs(sim.indicatedPower), 30);
 
     node(12, 64, 92, 58, '水柜', (sim.tenderWater * 1e6).toFixed(0) + ' mL');
     node(140, 74, 70, 38, '轴泵', gps(sim.pumpFlow));
     node(452, 42, 64, 36, '加减阀', (c.regulator * 100).toFixed(0) + '%');
-    node(540, 42, 64, 36, '过热管', '+' + sim.superheat.toFixed(0) + ' K');
+    node(540, 42, 64, 36, '过热器', '+' + sim.superheat.toFixed(0) + ' K');
     node(628, 42, 62, 36, '汽室', ((sim.engine.chestP - P_ATM) / KGF_CM2).toFixed(2));
     node(628, 104, 62, 40, '气缸 ×2', watts(sim.indicatedPower));
     node(628, 176, 62, 40, '车轮', watts(wheelPower));
@@ -590,9 +588,18 @@ export class Diagrams {
     g.beginPath();
     g.roundRect(bx, by, bw, bh, 12);
     g.stroke();
-    note('锅炉', bx + bw / 2, by + 15, '#ffffff');
+    // the two flue tubes run through the water: flue gas inside, heat passing out through their walls
+    const gas = cssHex(C.gas);
+    g.fillStyle = 'rgba(255, 159, 46, 0.2)';
+    g.strokeStyle = gas;
+    g.lineWidth = 1;
+    g.fillRect(bx + 8, 98, bw - 8, 28);
+    g.strokeRect(bx + 8, 98, bw - 8, 28);
+    pipe('flue', [266, 184, 266, 119, 440, 119, 440, 240, 730, 240, 730, 180], gas, sim.lit ? flueLoss : 0, 1000);
+    for (const x of [300, 345, 390]) pipe('heat' + x, [x, 97, x, 81], heat, sim.heatToWater, 600, 2);
+    note('烟管 ×2（内插过热器）', bx + bw / 2 + 10, 110, '#ffffff');
+    note(`锅炉 · 水位 ${(b.glass * 100).toFixed(0)}%`, bx + bw / 2, by + 15, '#ffffff');
     note(`${(b.gaugePressure / KGF_CM2).toFixed(2)} kgf/cm² · ${(b.T - 273.15).toFixed(0)} °C`, bx + bw / 2, by + 31, '#ffffff');
-    note(`水位 ${(b.glass * 100).toFixed(0)}%`, bx + bw / 2, by + bh - 8, '#ffffff');
 
     note('给水 ' + gps(sim.feedFlow), 230, 68, water);
     note('旁通回水 ' + gps(Math.max(0, sim.pumpFlow - sim.feedFlow)), 142, 156, cssHex(C.bypass));
@@ -600,10 +607,11 @@ export class Diagrams {
     note('通风阀 ' + gps(sim.blowerFlow), 565, 16, DIM);
     note(sim.safetyOpen ? '安全阀开' : '安全阀', 290, 12, sim.safetyOpen ? '#f85149' : DIM);
     note('酒精 ' + burnMl.toFixed(1) + ' mL/min', 177, 198, cssHex(C.fuel));
-    note('传给水 ' + watts(sim.heatToWater), 428, 164, heat, 'left');
+    note('传给水 ' + watts(sim.heatToWater), 345, 163, heat);
+    note('两根 U 形管，插在烟管内', 572, 93, DIM);
     note('烟气带走 ' + watts(flueLoss), 545, 234, cssHex(C.gas));
     note('散热 ' + watts(sim.boilerLoss), 246, 30, DIM, 'right');
-    note('排汽', 701, 118, DIM);
+    note('排汽', 701, 112, DIM);
     note('活塞功', 664, 164, '#e3b341', 'left');
     note(c.fan ? '通风机抽风' : '排汽 / 通风阀抽风', 722, 232, DIM, 'right');
 

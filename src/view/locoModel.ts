@@ -7,9 +7,15 @@ export type ViewMode = 'normal' | 'xray' | 'mech';
 
 /**
  * Body layout at 1:30, relative to the main (3rd) driving axle; x forward, y up, z to the right.
- * Outline follows the JNR D51 standard type (wheelbase, boiler height, overall length); the internal
- * arrangement (inner boiler inside an outer case, wick burner, superheater) follows the part names of
- * the Aster manual. Visual only: the simulation does not read these numbers.
+ * Outline follows the JNR D51 standard type (wheelbase, boiler height, overall length). The internal
+ * arrangement follows the Aster manual: the schematic on p.10 (side section: firebox, flue, hairpin
+ * superheater, three wicks), assembly drawing 17 (front tube plate with two flue openings and two unions;
+ * the superheater is one part, no. 17-5, made of two hairpin elements joined by headers) and drawing 23
+ * (three wick tubes). So: a single boiler drum inside the outer case, cut away at the rear above the
+ * burner, two flue tubes through the water space, one superheater whose two hairpins go into the flues
+ * from the smokebox, regulator and blower steam led forward through the boiler. The counts are from
+ * those drawings and the parts list; all dimensions, and whether the hairpin legs lie side by side or
+ * one above the other, are estimates. Visual only: the simulation does not read these numbers.
  */
 export const LAYOUT = {
   driverX: [0.1034, 0.0517, 0, -0.0517],
@@ -22,10 +28,25 @@ export const LAYOUT = {
   barrelX0: -0.045,
   smokeboxX0: 0.15,
   smokeboxX1: 0.212,
-  innerR: 0.0195,
-  innerY: 0.0655,
+  innerR: 0.0235,
+  innerY: 0.06,
+  /** backhead and front tube plate */
   innerX0: -0.104,
-  innerX1: 0.138,
+  innerX1: 0.146,
+  /** front wall of the firebox; behind it only the part of the drum above crownY exists */
+  throatX: -0.04,
+  crownY: 0.055,
+  flueR: 0.0062,
+  flueY: 0.0475,
+  flueZ: 0.0082,
+  /** superheater: hairpin length inside the flue, half the leg spacing, header position in the smokebox */
+  shLen: 0.13,
+  shPitch: 0.0024,
+  shHeaderX: 0.155,
+  /** pipes running through the boiler from the backhead valves to the front tube plate */
+  steamPipeY: 0.068,
+  blowerPipeY: 0.057,
+  blowerPipeZ: -0.004,
   cabX0: -0.188,
   chimneyX: 0.186,
   chimneyTop: 0.108,
@@ -43,6 +64,8 @@ const CLEAR_LEN = 0.002;
 const UP = new THREE.Vector3(0, 1, 0);
 const BLACK = 0x17191c;
 const GRAPHITE = 0x25282c;
+/** colour of the whole engine while it is drawn as a glass model behind the flow overlay */
+const GHOST = 0x9db2c9;
 
 function box(lx: number, ly: number, lz: number, m: THREE.Material): THREE.Mesh {
   return new THREE.Mesh(new THREE.BoxGeometry(lx, ly, lz), m);
@@ -71,6 +94,23 @@ function halfCylX(r: number, len: number, m: THREE.Material): THREE.Mesh {
   return new THREE.Mesh(g, m);
 }
 
+/** The part of a cylinder lying along x that is above the chord y = cut; runs from x = 0 to x = len. */
+function segX(r: number, cut: number, len: number, m: THREE.Material): THREE.Mesh {
+  const a = Math.asin(cut / r);
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, r, a, Math.PI - a, false);
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, { depth: len, bevelEnabled: false, curveSegments: 24 });
+  g.rotateY(Math.PI / 2);
+  return new THREE.Mesh(g, m);
+}
+
+/** Area of a circle of radius r lying below a line at height h above its lowest point. */
+function capArea(r: number, h: number): number {
+  const c = Math.min(2 * r, Math.max(0, h));
+  return r * r * Math.acos(1 - c / r) - (r - c) * Math.sqrt(Math.max(0, 2 * r * c - c * c));
+}
+
 function at<T extends THREE.Object3D>(o: T, x: number, y: number, z: number, parent: THREE.Object3D): T {
   o.position.set(x, y, z);
   parent.add(o);
@@ -78,7 +118,23 @@ function at<T extends THREE.Object3D>(o: T, x: number, y: number, z: number, par
 }
 
 function solid(color: number, metalness = 0.4, roughness = 0.55): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, metalness, roughness });
+  const m = new THREE.MeshStandardMaterial({ color, metalness, roughness });
+  m.userData = { color, metalness };
+  return m;
+}
+
+/** Material for parts inside the boiler: drawn over the water, never hiding what is behind. */
+function inside(color: number, opacity: number): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+}
+
+function paint(m: THREE.MeshStandardMaterial, color: number, opacity: number, metalness: number): void {
+  m.color.setHex(color);
+  m.metalness = metalness;
+  m.opacity = opacity;
+  m.transparent = opacity < 1;
+  m.depthWrite = opacity >= 1;
+  m.needsUpdate = true;
 }
 
 /** A bar drawn between two points of the side-view plane. */
@@ -121,6 +177,8 @@ export interface Label {
   /** -1 left, +1 right, 0 = always shown */
   side: number;
   color?: number;
+  /** part inside the boiler or smokebox: only labelled while the shells are see-through */
+  inner?: boolean;
 }
 
 interface ExplodePart {
@@ -129,7 +187,8 @@ interface ExplodePart {
   offset: THREE.Vector3;
 }
 
-const BUBBLES = 36;
+const BUBBLES = 40;
+const LEVELS = 48;
 
 export class LocoModel {
   readonly root = new THREE.Group();
@@ -147,6 +206,7 @@ export class LocoModel {
   private readonly parts: ExplodePart[] = [];
   private readonly shellMats: THREE.MeshStandardMaterial[] = [];
   private readonly casingMats: THREE.MeshStandardMaterial[] = [];
+  private readonly solidMats: THREE.MeshStandardMaterial[] = [];
   private readonly partMats = {} as Record<PartName, THREE.MeshStandardMaterial>;
   private readonly sides: Side[] = [];
   private readonly smallWheels: THREE.Object3D[] = [];
@@ -156,14 +216,18 @@ export class LocoModel {
   private inner!: THREE.Group;
   private waterMat!: THREE.MeshStandardMaterial;
   private steamMat!: THREE.MeshBasicMaterial;
+  private flueGasMat!: THREE.MeshBasicMaterial;
+  private readonly flueGas: THREE.Mesh[] = [];
   private bubbles!: THREE.Points;
   private readonly bubbleSeed = new Float32Array(BUBBLES);
+  private readonly bubbleBase = new Float32Array(BUBBLES);
+  /** liquid volume fraction below LEVELS + 1 equally spaced heights across the drum */
+  private readonly levelTable = new Float32Array(LEVELS + 1);
   private tenderWater!: THREE.Mesh;
   private tenderFuel!: THREE.Mesh;
 
   private readonly steel = solid(0xb9bec4, 0.9, 0.3);
   private readonly brass = solid(0xc9a646, 0.9, 0.3);
-  private readonly copper = solid(0xb87333, 0.8, 0.4);
   private readonly dark = solid(0x2a2d31);
   private readonly wheelMat = solid(0x1d1f22, 0.5, 0.5);
   private readonly holeMat = solid(0x08090a, 0.2, 0.9);
@@ -180,6 +244,7 @@ export class LocoModel {
     this.tenderYaw = -a;
 
     for (const name of Object.keys(PART_COLORS) as PartName[]) this.partMats[name] = solid(name === 'link' ? 0xc9a646 : 0xb9bec4, 0.9, 0.3);
+    this.solidMats.push(this.steel, this.brass, this.dark, this.wheelMat, this.holeMat);
 
     this.buildFrame();
     this.buildCase();
@@ -215,8 +280,13 @@ export class LocoModel {
     return group;
   }
 
-  private label(text: string, parent: THREE.Object3D, x: number, y: number, z: number): void {
-    this.labels.push({ text, anchor: at(new THREE.Object3D(), x, y, z, parent), kind: 'struct', side: 0 });
+  private label(text: string, parent: THREE.Object3D, x: number, y: number, z: number, inner = false): void {
+    this.labels.push({ text, anchor: at(new THREE.Object3D(), x, y, z, parent), kind: 'struct', side: 0, inner });
+  }
+
+  /** True while the boiler internals are drawn. */
+  get internalsVisible(): boolean {
+    return this.internals.visible;
   }
 
   private driver(parent: THREE.Object3D, x: number, z: number, crank: number): THREE.Object3D {
@@ -276,18 +346,17 @@ export class LocoModel {
       at(box(w, 0.005, 0.034, dark), x, yS + 0.006, 0, F);
       for (const s of [1, -1]) this.smallWheel(F, x, s * LAYOUT.wheelZ, true);
     }
-    // alcohol burner: sump tray and wick tubes under the firebox
+    // alcohol burner (drawing 23): three wick tubes in a row on one feed pipe, under the firebox
     const bx = LAYOUT.burnerX;
-    at(box(0.062, 0.004, 0.028, brass), bx, 0.005, 0, F);
+    at(cylX(0.0022, 0.066, brass, 10), bx - 0.006, 0.0075, 0, F);
     const flameMat = new THREE.MeshBasicMaterial({ color: 0x5aa2ff, transparent: true, opacity: 0.75, depthWrite: false });
     for (const dx of [-0.02, 0, 0.02]) {
-      for (const s of [1, -1]) {
-        at(cylY(0.0026, 0.014, brass, 10), bx + dx, 0.014, s * 0.007, F);
-        const flame = at(new THREE.Mesh(new THREE.ConeGeometry(0.0034, 0.012, 10), flameMat), bx + dx, 0.027, s * 0.007, F);
-        this.flames.push(flame);
-      }
+      at(cylY(0.0042, 0.014, brass, 14), bx + dx, 0.014, 0, F);
+      const flame = at(new THREE.Mesh(new THREE.ConeGeometry(0.0048, 0.014, 12), flameMat), bx + dx, 0.028, 0, F);
+      flame.renderOrder = 3;
+      this.flames.push(flame);
     }
-    this.label('酒精燃烧器（灯芯）', F, bx, 0.012, 0);
+    this.label('酒精燃烧器（3 根灯芯）', F, bx, 0.012, 0);
     // axle-driven feed pump and its eccentric
     at(cylX(0.003, 0.016, brass, 12), LAYOUT.pumpX, -0.004, -0.007, F);
     at(cylZ(0.006, 0.003, steel, 16), LAYOUT.driverX[1], 0, -0.007, F);
@@ -363,38 +432,105 @@ export class LocoModel {
   private buildInner(): void {
     const I = (this.inner = this.group([0, 0.05, 0]));
     I.add(this.internals);
-    const { innerR: R, innerY: y, innerX0: x0, innerX1: x1 } = LAYOUT;
-    const len = x1 - x0;
-    const cx = (x0 + x1) / 2;
-    at(cylX(R, len, this.casing(0xb87333, 0.8, 0.4), 40), cx, y, 0, this.internals);
-    this.steamMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1, depthWrite: false });
-    const steam = at(cylX(R - 0.0012, len - 0.004, this.steamMat, 40), cx, y, 0, this.internals);
-    steam.renderOrder = 1;
-    this.waterMat = new THREE.MeshStandardMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.8, roughness: 0.2, depthWrite: false, clippingPlanes: [this.waterPlane] });
-    const water = at(cylX(R - 0.0015, len - 0.005, this.waterMat, 40), cx, y, 0, this.internals);
-    water.renderOrder = 2;
-    // water tubes hanging in the gas path, superheater pipe beside them
-    for (const z of [-0.008, 0, 0.008]) at(cylX(0.0018, len - 0.05, this.copper, 10), cx, y - R - 0.0035, z, this.internals);
-    at(cylX(0.0012, 0.245, this.steel, 8), 0.035, 0.037, 0.0125, this.internals);
-    // backhead: water glass
-    at(cylY(0.0013, 0.016, new THREE.MeshBasicMaterial({ color: 0x9fd3ff }), 8), x0 - 0.004, y, 0.012, this.internals);
+    const N = this.internals;
+    const L = LAYOUT;
+    const { innerR: R, innerY: y, innerX0: x0, innerX1: x1, throatX: xt, flueR, flueY, flueZ, shPitch: sp, shHeaderX: hx } = L;
+    const cut = L.crownY - y;
+    const barrel = x1 - xt;
+    const rear = xt - x0;
+    const order = <T extends THREE.Object3D>(o: T, n: number): T => {
+      o.renderOrder = n;
+      return o;
+    };
 
+    // drum: full barrel ahead of the firebox, only the part above the firebox crown behind it
+    const drum = this.casing(0xb87333, 0.8, 0.4);
+    at(cylX(R, barrel, drum, 40), (xt + x1) / 2, y, 0, N);
+    at(segX(R, cut, rear, drum), x0, y, 0, N);
+    this.steamMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1, depthWrite: false });
+    order(at(cylX(R - 0.0012, barrel - 0.002, this.steamMat, 40), (xt + x1) / 2, y, 0, N), 1);
+    order(at(segX(R - 0.0012, cut + 0.0008, rear - 0.001, this.steamMat), x0 + 0.001, y, 0, N), 1);
+    this.waterMat = new THREE.MeshStandardMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.75, roughness: 0.2, depthWrite: false, clippingPlanes: [this.waterPlane] });
+    const Rw = R - 0.0015;
+    order(at(cylX(Rw, barrel - 0.003, this.waterMat, 40), (xt + x1) / 2, y, 0, N), 2);
+    order(at(segX(Rw, cut + 0.001, rear - 0.0015, this.waterMat), x0 + 0.0015, y, 0, N), 2);
+
+    // two flue tubes through the water space, from the firebox to the smokebox
+    const flueMat = inside(0xd08a4a, 0.5);
+    this.flueGasMat = new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.3, depthWrite: false });
+    const tubeGeo = new THREE.CylinderGeometry(flueR, flueR, barrel + 0.002, 24, 1, true);
+    tubeGeo.rotateZ(Math.PI / 2);
+    for (const s of [1, -1]) {
+      order(at(new THREE.Mesh(tubeGeo, flueMat), (xt + x1) / 2, flueY, s * flueZ, N), 3);
+      this.flueGas.push(order(at(cylX(flueR - 0.0008, barrel, this.flueGasMat, 16), (xt + x1) / 2, flueY, s * flueZ, N), 3));
+    }
+
+    // superheater: steam from the upper header runs back down each flue, turns and returns to the lower header
+    const pipe = inside(0xdfe5ea, 1);
+    const rs = 0.0011;
+    const xb = x1 - L.shLen;
+    const bend = new THREE.TorusGeometry(sp, rs, 8, 14, Math.PI);
+    for (const s of [1, -1]) {
+      for (const d of [sp, -sp]) order(at(cylX(rs, hx - xb, pipe, 8), (hx + xb) / 2, flueY + d, s * flueZ, N), 4);
+      const u = order(at(new THREE.Mesh(bend, pipe), xb, flueY, s * flueZ, N), 4);
+      u.rotation.z = Math.PI / 2;
+    }
+    for (const d of [sp, -sp]) order(at(cylZ(rs * 1.5, 2 * flueZ + 0.004, pipe, 10), hx, flueY + d, 0, N), 4);
+    // regulator and blower steam are led forward through the boiler to the two unions on the front tube plate
+    order(at(cylX(0.0012, hx - x0 + 0.008, pipe, 8), (hx + x0 - 0.008) / 2, L.steamPipeY, 0, N), 4);
+    order(at(cylY(0.0012, L.steamPipeY - flueY - sp, pipe, 8), hx, (L.steamPipeY + flueY + sp) / 2, 0, N), 4);
+    order(at(cylX(0.001, 0.176 - x0 + 0.008, pipe, 8), (0.176 + x0 - 0.008) / 2, L.blowerPipeY, L.blowerPipeZ, N), 4);
+    // superheater outlet down to the cylinders; blower nozzle and exhaust nozzle under the chimney
+    order(at(cylX(rs, 0.005, pipe, 8), hx + 0.0025, flueY - sp, 0, N), 4);
+    order(at(cylY(rs * 1.3, flueY - sp - 0.026, pipe, 8), hx + 0.005, (flueY - sp + 0.026) / 2, 0, N), 4);
+    order(at(cylY(0.001, 0.011, pipe, 8), 0.176, L.blowerPipeY - 0.0055, L.blowerPipeZ, N), 4);
+    order(at(cylX(0.001, 0.006, pipe, 8), 0.179, 0.046, -0.003, N), 4);
+    order(at(cylY(0.0012, 0.008, pipe, 8), 0.182, 0.05, -0.002, N), 4);
+    order(at(cylY(0.0022, L.blastY - 0.012, inside(0xc9a646, 0.9), 12), L.chimneyX, (L.blastY + 0.012) / 2, 0, N), 4);
+    // backhead: water glass
+    at(cylY(0.0013, 0.016, new THREE.MeshBasicMaterial({ color: 0x9fd3ff }), 8), x0 - 0.004, y, 0.012, N);
+
+    // steam bubbles rise from the heated surfaces: the flue tubes and the firebox crown
     const pos = new Float32Array(BUBBLES * 3);
     for (let i = 0; i < BUBBLES; i++) {
       this.bubbleSeed[i] = Math.random();
-      pos[i * 3] = x0 + 0.01 + Math.random() * (len - 0.02);
-      pos[i * 3 + 1] = y - R;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 1.5 * R;
+      const x = x0 + 0.006 + Math.random() * (x1 - x0 - 0.012);
+      let z: number;
+      if (x < xt) {
+        z = (Math.random() - 0.5) * 0.034;
+        this.bubbleBase[i] = L.crownY + 0.001;
+      } else {
+        const dz = (Math.random() - 0.5) * 1.7 * flueR;
+        z = (i % 2 ? 1 : -1) * flueZ + dz;
+        this.bubbleBase[i] = flueY + Math.sqrt(flueR * flueR - dz * dz);
+      }
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = this.bubbleBase[i];
+      pos[i * 3 + 2] = z;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     this.bubbles = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.0022, transparent: true, opacity: 0.85, depthWrite: false }));
     this.bubbles.frustumCulled = false;
     this.bubbles.renderOrder = 3;
-    this.internals.add(this.bubbles);
+    N.add(this.bubbles);
 
-    this.label('内锅炉（水 / 蒸汽）', I, 0.05, y + R, 0);
-    this.label('水管与过热管（烟气通道内）', I, 0.09, y - R - 0.004, 0.0125);
+    // water volume below a given height, allowing for the flues and the cut-away rear end
+    const bottom = y - Rw;
+    const crown = capArea(Rw, L.crownY + 0.001 - bottom);
+    for (let i = 0; i <= LEVELS; i++) {
+      const h = (i / LEVELS) * 2 * Rw;
+      const circle = capArea(Rw, h);
+      this.levelTable[i] = barrel * (circle - 2 * capArea(flueR, h - (flueY - flueR - bottom))) + rear * Math.max(0, circle - crown);
+    }
+    for (let i = 0; i <= LEVELS; i++) this.levelTable[i] /= this.levelTable[LEVELS];
+
+    this.label('锅炉（水 / 蒸汽）', I, 0.06, y + R, 0, true);
+    this.label('烟管 ×2', I, -0.012, flueY - flueR, flueZ, true);
+    this.label('过热器：两根 U 形管，各插入一根烟管', I, 0.085, flueY + sp, flueZ, true);
+    this.label('火室', I, -0.075, 0.04, 0, true);
+    this.label('蒸汽干管 / 通风管（穿过锅炉）', I, -0.06, L.steamPipeY, 0, true);
+    this.label('通风喷嘴 / 排汽喷口', I, 0.182, L.blastY, 0, true);
   }
 
   private buildCab(): void {
@@ -500,6 +636,7 @@ export class LocoModel {
     for (const s of [1, -1]) at(box(0.11, 0.016, 0.001, black), 0.045, 0.078, s * 0.0445, T);
     at(box(0.001, 0.016, 0.09, black), -0.01, 0.078, 0, T);
     const coal = solid(0x0b0b0c, 0, 1);
+    this.solidMats.push(coal);
     at(box(0.104, 0.01, 0.086, coal), 0.045, 0.074, 0, T);
     for (let i = 0; i < 14; i++) {
       const lump = at(box(0.012, 0.008, 0.012, coal), 0.045 + ((i * 37) % 90) / 1000 - 0.045, 0.08, ((i * 53) % 70) / 1000 - 0.035, T);
@@ -526,27 +663,25 @@ export class LocoModel {
     this.label('手摇泵', T, 0.085, 0.068, -0.025);
   }
 
-  /** ghost = outer shells drawn translucent even in normal mode (used while the flow overlay is on). */
+  /**
+   * ghost = the whole engine is drawn as a pale glass model so that nothing hides the flow overlay:
+   * shells, frame, wheels and motion all become translucent and stop writing depth.
+   */
   setMode(mode: ViewMode, ghost: boolean): void {
     const see = mode !== 'normal' || ghost;
     for (const m of this.shellMats) {
-      m.transparent = see;
-      m.opacity = mode === 'mech' ? 0.05 : see ? 0.14 : 1;
-      m.depthWrite = !see;
-      m.needsUpdate = true;
+      const opacity = mode === 'mech' ? 0.05 : ghost ? 0.1 : see ? 0.14 : 1;
+      paint(m, ghost ? GHOST : m.userData.color, opacity, ghost ? 0.1 : m.userData.metalness);
     }
-    for (const m of this.casingMats) {
-      m.transparent = see;
-      m.opacity = see ? 0.28 : 1;
-      m.depthWrite = !see;
-      m.needsUpdate = true;
+    for (const m of this.casingMats) paint(m, m.userData.color, ghost ? 0.2 : see ? 0.28 : 1, m.userData.metalness);
+    for (const m of this.solidMats) paint(m, ghost ? GHOST : m.userData.color, ghost ? 0.2 : 1, ghost ? 0.1 : m.userData.metalness);
+    for (const name of Object.keys(PART_COLORS) as PartName[]) {
+      const color = mode === 'mech' ? PART_COLORS[name] : name === 'link' ? 0xc9a646 : 0xb9bec4;
+      paint(this.partMats[name], ghost && mode !== 'mech' ? GHOST : color, ghost ? 0.3 : 1, mode === 'mech' || ghost ? 0.3 : 0.9);
     }
+    this.waterMat.opacity = ghost ? 0.4 : 0.75;
     this.internals.visible = see && (mode !== 'mech' || ghost);
     this.tenderWater.visible = this.tenderFuel.visible = see;
-    for (const name of Object.keys(PART_COLORS) as PartName[]) {
-      this.partMats[name].color.setHex(mode === 'mech' ? PART_COLORS[name] : name === 'link' ? 0xc9a646 : 0xb9bec4);
-      this.partMats[name].metalness = mode === 'mech' ? 0.3 : 0.9;
-    }
   }
 
   setExplode(e: number): void {
@@ -554,17 +689,13 @@ export class LocoModel {
     for (const p of this.parts) p.group.position.copy(p.base).addScaledVector(p.offset, e);
   }
 
-  /** Circular-segment height (as a fraction of the diameter) holding the given area fraction. */
+  /** Water level (as a fraction of the drum diameter) at which the drum holds the given volume fraction. */
   private levelFor(fill: number): number {
-    let lo = 0;
-    let hi = 1;
-    for (let i = 0; i < 18; i++) {
-      const h = (lo + hi) / 2;
-      const th = 2 * Math.acos(1 - 2 * h);
-      if ((th - Math.sin(th)) / (2 * Math.PI) < fill) lo = h;
-      else hi = h;
-    }
-    return (lo + hi) / 2;
+    const t = this.levelTable;
+    let i = 1;
+    while (i < LEVELS && t[i] < fill) i++;
+    const span = t[i] - t[i - 1];
+    return (i - 1 + (span > 0 ? Math.min(1, Math.max(0, (fill - t[i - 1]) / span)) : 0)) / LEVELS;
   }
 
   update(dt: number): void {
@@ -636,14 +767,16 @@ export class LocoModel {
     if (n > 0) {
       const pos = this.bubbles.geometry.getAttribute('position') as THREE.BufferAttribute;
       for (let i = 0; i < n; i++) {
-        const z = pos.getZ(i);
-        const bottom = LAYOUT.innerY - Math.sqrt(Math.max(0, Rw * Rw - z * z));
+        const base = this.bubbleBase[i];
         let y = pos.getY(i) + (0.02 + 0.03 * this.bubbleSeed[i]) * dt;
-        if (y > surface || y < bottom) y = bottom;
+        if (y > surface || y < base) y = base;
         pos.setY(i, y);
       }
       pos.needsUpdate = true;
     }
+    // hot gas glowing in the flues
+    for (const f of this.flueGas) f.visible = sim.lit;
+    this.flueGasMat.opacity = 0.12 + 0.3 * Math.min(1, sim.fireGain);
 
     const wf = Math.max(0.001, sim.tenderWater / sim.params.feed.tenderCapacity);
     this.tenderWater.scale.y = wf;
@@ -656,7 +789,7 @@ export class LocoModel {
     for (const f of this.flames) {
       f.visible = sim.lit;
       f.scale.y = fs;
-      f.position.y = 0.021 + 0.006 * fs;
+      f.position.y = 0.021 + 0.007 * fs;
     }
   }
 }

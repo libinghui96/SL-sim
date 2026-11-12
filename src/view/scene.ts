@@ -3,10 +3,25 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { LocoSim } from '../sim/loco';
 import { P_ATM } from '../sim/steam';
 import { cssHex } from './colors';
-import { FlowOverlay } from './flow';
+import { FLOW_COLORS, FlowOverlay, type FlowKind } from './flow';
 import { LocoModel, type ViewMode } from './locoModel';
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** [normal, while the flow overlay is on]: the overlay is drawn on a dark, plain scene */
+const SKY = [0xbcd6ea, 0x10151c];
+const GROUND = [0x6f9460, 0x171d24];
+const BALLAST = [0x8b857b, 0x2a3038];
+const NARROW = 520;
+
+interface LabelItem {
+  el: HTMLElement;
+  anchor: THREE.Object3D;
+  wanted: () => boolean;
+  /** live text, refreshed a few times per second */
+  text?: () => string;
+  w: number;
+  h: number;
+}
 
 interface Puff {
   sprite: THREE.Sprite;
@@ -25,7 +40,11 @@ export class LocoView {
   private readonly model: LocoModel;
   private readonly flow: FlowOverlay;
   private readonly labelLayer = document.createElement('div');
-  private readonly labelEls: HTMLElement[] = [];
+  private readonly labelItems: LabelItem[] = [];
+  private readonly placed: number[] = [];
+  private readonly groundMat = new THREE.MeshStandardMaterial({ color: GROUND[0], roughness: 1 });
+  private readonly ballastMat = new THREE.MeshStandardMaterial({ color: BALLAST[0], roughness: 1 });
+  private frame = 0;
   private readonly puffs: Puff[] = [];
   private readonly puffTexture: THREE.Texture;
   private readonly rw: number;
@@ -37,6 +56,9 @@ export class LocoView {
   private showFlow = false;
   private showLabels = false;
   private inset = 0;
+  private sideInset = 0;
+  /** usable label width [px]; below NARROW the numeric flow labels would bury the engine */
+  private labelWidth = 1000;
 
   constructor(
     private readonly container: HTMLElement,
@@ -52,7 +74,7 @@ export class LocoView {
     this.labelLayer.style.display = 'none';
     container.appendChild(this.labelLayer);
 
-    this.scene.background = new THREE.Color(0xbcd6ea);
+    this.scene.background = new THREE.Color(SKY[0]);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x667755, 1.9));
     const sun = new THREE.DirectionalLight(0xffffff, 2.4);
     sun.position.set(3, 6, 4);
@@ -72,18 +94,31 @@ export class LocoView {
     this.flow.group.visible = false;
     this.model.root.add(this.flow.group);
     this.scene.add(this.model.root);
-    for (const label of this.model.labels) {
+    const item = (className: string, color: number | undefined, anchor: THREE.Object3D, wanted: () => boolean, text?: () => string): HTMLElement => {
       const el = document.createElement('span');
-      el.textContent = label.text;
-      el.className = label.kind;
-      if (label.color !== undefined) el.style.borderColor = cssHex(label.color);
+      el.className = className;
+      if (color !== undefined) el.style.borderColor = cssHex(color);
       this.labelLayer.appendChild(el);
-      this.labelEls.push(el);
+      this.labelItems.push({ el, anchor, wanted, text, w: 0, h: 0 });
+      return el;
+    };
+    // flow labels first: they get their place before the part names
+    for (const label of this.flow.labels) {
+      item('flow', FLOW_COLORS[label.kind], label.anchor, () => this.flow.group.visible && this.labelWidth >= NARROW && this.flow.shows(label.kind), label.text);
+    }
+    for (const label of this.model.labels) {
+      const wanted =
+        label.kind === 'mech'
+          ? () => this.showLabels && this.mode === 'mech' && (label.side === 0 || label.side === this.camSide)
+          : () => this.showLabels && this.mode !== 'mech' && (!label.inner || this.model.internalsVisible);
+      item(label.kind, label.color, label.anchor, wanted).textContent = label.text;
     }
 
     this.heading = this.placeTrain();
     this.orbit.target.copy(this.model.root.position).add(new THREE.Vector3(0, 0.035, 0));
-    this.camera.position.copy(this.orbit.target).add(new THREE.Vector3(0.5, 0.2, -0.3));
+    // stand further back on a narrow (portrait) view so that the whole engine stays in the picture
+    const aspect = (container.clientWidth || 1) / (container.clientHeight || 1);
+    this.camera.position.copy(this.orbit.target).addScaledVector(new THREE.Vector3(0.5, 0.2, -0.3), Math.min(2.8, Math.max(1, 1.65 / aspect)));
     this.orbit.update();
 
     new ResizeObserver(() => this.resize()).observe(container);
@@ -95,6 +130,15 @@ export class LocoView {
     this.showFlow = flow;
     this.showLabels = labels;
     this.model.setMode(mode, flow);
+    const k = flow ? 1 : 0;
+    (this.scene.background as THREE.Color).setHex(SKY[k]);
+    this.groundMat.color.setHex(GROUND[k]);
+    this.ballastMat.color.setHex(BALLAST[k]);
+  }
+
+  /** Show or hide one medium of the flow overlay. */
+  setFlowKind(kind: FlowKind, on: boolean): void {
+    this.flow.setKind(kind, on);
   }
 
   setExplode(e: number): void {
@@ -105,6 +149,11 @@ export class LocoView {
   setBottomInset(px: number): void {
     this.inset = px;
     this.resize();
+  }
+
+  /** Width of the panels covering the left and right edges of the view; labels stay between them. */
+  setSideInset(px: number): void {
+    this.sideInset = px;
   }
 
   private resize(): void {
@@ -130,10 +179,10 @@ export class LocoView {
 
   private buildTrack(): void {
     const R = this.trackR;
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(R + 8, 64), new THREE.MeshStandardMaterial({ color: 0x6f9460, roughness: 1 }));
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(R + 8, 64), this.groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.012;
-    const ballast = new THREE.Mesh(new THREE.RingGeometry(R - 0.055, R + 0.055, 180), new THREE.MeshStandardMaterial({ color: 0x8b857b, roughness: 1 }));
+    const ballast = new THREE.Mesh(new THREE.RingGeometry(R - 0.055, R + 0.055, 180), this.ballastMat);
     ballast.rotation.x = -Math.PI / 2;
     ballast.position.y = -0.0065;
     this.scene.add(ground, ballast);
@@ -206,6 +255,8 @@ export class LocoView {
       if (hot && sim.controls.whistle) this.emit(m.whistle, 0, 0.8, 0, 0.008, 0.5, 0.08);
       if (sim.controls.drains && sim.drainFlow > 1e-6) m.drains.forEach((d, i) => this.emit(d, 0.25, -0.02, (i === 0 ? -1 : 1) * 0.35, 0.012, 0.7, 0.1));
     }
+    // steam and smoke would only haze the flow overlay
+    const fade = this.showFlow ? 0 : 0.75;
     for (const p of this.puffs) {
       if (p.age >= p.life) continue;
       p.age += dt;
@@ -217,28 +268,61 @@ export class LocoView {
       p.vel.y += 0.05 * dt;
       p.sprite.position.addScaledVector(p.vel, dt);
       p.sprite.scale.setScalar(p.size + p.grow * p.age);
-      p.sprite.material.opacity = 0.75 * (1 - p.age / p.life);
+      p.sprite.material.opacity = fade * (1 - p.age / p.life);
     }
   }
 
+  private camSide = 1;
+
+  /** Place the HTML labels over their anchors; a label that would cover an earlier one is moved up. */
   private updateLabels(): void {
-    this.labelLayer.style.display = this.showLabels ? '' : 'none';
-    if (!this.showLabels) return;
+    const show = this.showLabels || this.flow.group.visible;
+    this.labelLayer.style.display = show ? '' : 'none';
+    if (!show) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
-    const camSide = Math.sign(this.model.root.worldToLocal(this.camera.position.clone()).z);
+    const left = this.sideInset;
+    const right = w - this.sideInset;
+    this.labelWidth = right - left;
+    this.camSide = Math.sign(this.model.root.worldToLocal(this.camera.position.clone()).z);
+    const refresh = this.frame++ % 10 === 0;
     const p = new THREE.Vector3();
-    this.model.labels.forEach((label, i) => {
-      const el = this.labelEls[i];
-      const wanted = (label.kind === 'mech') === (this.mode === 'mech') && (label.side === 0 || label.side === camSide);
-      if (wanted) label.anchor.getWorldPosition(p).project(this.camera);
+    const placed = this.placed;
+    placed.length = 0;
+    for (const it of this.labelItems) {
+      const wanted = it.wanted();
+      if (wanted) it.anchor.getWorldPosition(p).project(this.camera);
       if (!wanted || p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) {
-        el.style.display = 'none';
-        return;
+        it.el.style.display = 'none';
+        continue;
       }
-      el.style.display = '';
-      el.style.transform = `translate(${(((p.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - p.y) / 2) * h).toFixed(1)}px) translate(-50%, -135%)`;
-    });
+      it.el.style.display = '';
+      if (it.text && (refresh || it.w === 0)) {
+        const text = it.text();
+        if (text !== it.el.textContent) {
+          it.el.textContent = text;
+          it.w = 0;
+        }
+      }
+      if (it.w === 0) {
+        it.w = it.el.offsetWidth;
+        it.h = it.el.offsetHeight;
+      }
+      const x = Math.min(right - it.w, Math.max(left, ((p.x + 1) / 2) * w - it.w / 2));
+      let y = ((1 - p.y) / 2) * h - it.h * 1.35;
+      for (let tries = 0; tries < 12; tries++) {
+        let hit = false;
+        for (let i = 0; i < placed.length; i += 4) {
+          if (x < placed[i + 2] && x + it.w > placed[i] && y < placed[i + 3] && y + it.h > placed[i + 1]) {
+            y = placed[i + 1] - it.h - 2;
+            hit = true;
+          }
+        }
+        if (!hit) break;
+      }
+      placed.push(x, y, x + it.w, y + it.h);
+      it.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    }
   }
 
   /** Read the simulation state and draw one frame; dt is wall-clock seconds, used only for effects. */

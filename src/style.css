@@ -3,6 +3,10 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
   font: 13px/1.4 system-ui, 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
   color: #e8eaed;
   background: #111;
@@ -31,9 +35,16 @@ body {
   padding: 0 5px;
   font-size: 11px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   background: rgba(13, 17, 23, 0.78);
   border-bottom: 2px solid #9ecbff;
   border-radius: 3px;
+}
+
+.labels span.flow {
+  font-size: 12px;
+  background: rgba(13, 17, 23, 0.9);
+  border-bottom-width: 3px;
 }
 
 #top {
@@ -47,6 +58,11 @@ body {
   align-items: center;
   padding: 6px 12px;
   background: rgba(20, 24, 28, 0.86);
+}
+
+/* on a wide screen the settings are simply part of the top bar */
+#settings {
+  display: contents;
 }
 
 #top label {
@@ -72,6 +88,10 @@ body {
 #clock {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+}
+
+#mtabs {
+  display: none;
 }
 
 .panel {
@@ -108,7 +128,7 @@ body {
   height: 36px;
 }
 
-#dock.collapsed canvas {
+#dock.collapsed .scroll {
   display: none;
 }
 
@@ -142,18 +162,34 @@ body {
 #legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 14px;
+  gap: 4px 6px;
+  align-items: center;
   font-size: 12px;
 }
 
-#legend span::before {
+#legend button {
+  padding: 1px 8px 1px 6px;
+  border-radius: 10px;
+  background: #1c2128;
+}
+
+#legend button::before {
   content: '';
   display: inline-block;
   width: 9px;
   height: 9px;
-  margin-right: 4px;
+  margin-right: 5px;
   border-radius: 50%;
   background: var(--c);
+}
+
+#legend button.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+#legend .tip {
+  color: #8b949e;
 }
 
 #toast {
@@ -280,21 +316,225 @@ canvas {
   background: #9a3412;
 }
 
-@media (max-width: 1150px) {
-  #dock,
-  #legend,
-  #toast {
-    left: 8px;
-    right: 8px;
+/*
+ * Compact layout for phones, tablets and small windows. The 3D view keeps its own area and the four
+ * panels (controls, gauges, diagrams, settings) share one sheet, switched by a tab bar:
+ * portrait = sheet along the bottom, landscape = sheet down the right-hand side.
+ * Keep the condition in step with COMPACT in src/view/panel.ts.
+ */
+@media (max-width: 1200px), (max-height: 600px) {
+  body {
+    --tabs: 44px;
+    --sheet-left: 0px;
+    --sheet-h: 46%;
+    --view-right: 0px;
+    --view-bottom: var(--sheet-h);
+    font-size: 14px;
+  }
+
+  body.sheet-closed {
+    --sheet-h: var(--tabs);
+  }
+
+  #view {
+    inset: 0 var(--view-right) var(--view-bottom) 0;
+  }
+
+  #top {
+    right: var(--view-right);
+    flex-wrap: nowrap;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  #top strong {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #clock {
+    white-space: nowrap;
+  }
+
+  #mtabs {
+    position: fixed;
+    left: var(--sheet-left);
+    right: 0;
+    bottom: calc(var(--sheet-h) - var(--tabs));
+    height: var(--tabs);
+    display: flex;
+    background: #14181c;
+    border-top: 1px solid #30363d;
+    box-sizing: border-box;
+  }
+
+  #mtabs button {
+    flex: 1;
+    padding: 0;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    font-size: 14px;
+  }
+
+  #mtabs button.on {
+    color: #9ecbff;
+    border-bottom-color: #58a6ff;
+    background: rgba(88, 166, 255, 0.12);
+  }
+
+  #mtabs #sheetToggle {
+    flex: 0 0 48px;
+    font-size: 16px;
   }
 
   #controls,
-  #gauges {
-    bottom: 52px;
+  #gauges,
+  #dock,
+  #settings {
+    display: none;
+    position: fixed;
+    top: auto;
+    left: var(--sheet-left);
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: calc(var(--sheet-h) - var(--tabs));
+    box-sizing: border-box;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    background: #14181c;
+    border-radius: 0;
   }
 
-  body.dock-open #controls,
-  body.dock-open #gauges {
-    bottom: 328px;
+  body[data-sheet='controls']:not(.sheet-closed) #controls,
+  body[data-sheet='gauges']:not(.sheet-closed) #gauges {
+    display: block;
+  }
+
+  body[data-sheet='settings']:not(.sheet-closed) #settings {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    align-items: center;
+    gap: 12px 18px;
+  }
+
+  body[data-sheet='dock']:not(.sheet-closed) #dock {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+  }
+
+  #dock .tabs {
+    flex: none;
+  }
+
+  #dock .tabs button {
+    flex: 1;
+  }
+
+  #dockToggle {
+    display: none;
+  }
+
+  /* the diagrams are laid out for a wide canvas: on a narrow sheet they scroll sideways */
+  #dock .scroll,
+  #dock.collapsed .scroll {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  #diagram {
+    min-width: 700px;
+    height: 100%;
+  }
+
+  #settings .sep {
+    display: none;
+  }
+
+  #settings input[type='range'] {
+    width: 150px;
+  }
+
+  #legend,
+  #toast {
+    left: 8px;
+    right: calc(var(--view-right) + 8px);
+  }
+
+  #legend {
+    top: 40px;
+  }
+
+  #legend .tip {
+    display: none;
+  }
+
+  #toast {
+    top: auto;
+    bottom: calc(var(--view-bottom) + 8px);
+  }
+
+  /* touch-sized controls; 16px keeps iOS from zooming into a focused field */
+  button,
+  select,
+  input[type='number'] {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  select,
+  input[type='number'] {
+    font-size: 16px;
+  }
+
+  #legend button {
+    min-height: 28px;
+    padding: 2px 10px 2px 8px;
+    border-radius: 14px;
+  }
+
+  input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+    margin: 0 4px 0 0;
+  }
+
+  input[type='range'] {
+    height: 30px;
+  }
+
+  .row label,
+  #settings label {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+  }
+
+  .slider {
+    margin-bottom: 10px;
+  }
+}
+
+@media (orientation: landscape) and (max-width: 1200px), (orientation: landscape) and (max-height: 600px) {
+  body {
+    --sheet-w: min(440px, 48%);
+    --sheet-left: calc(100% - var(--sheet-w));
+    --sheet-h: 100%;
+    --view-right: var(--sheet-w);
+    --view-bottom: 0px;
+  }
+
+  body.sheet-closed {
+    --sheet-h: var(--tabs);
+    --view-right: 0px;
   }
 }
