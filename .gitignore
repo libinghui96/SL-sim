@@ -1,4 +1,5 @@
 node_modules
 dist
+.tsupgrader/
 # vendor manuals (Aster Hobby copyright), kept locally only
 docs/

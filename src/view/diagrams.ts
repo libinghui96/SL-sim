@@ -1,5 +1,7 @@
+import { t } from '../i18n';
 import { portOpenings, type PortOpenings } from '../sim/engine';
 import type { LocoSim } from '../sim/loco';
+import { sidePhase } from '../sim/runningGear';
 import { KGF_CM2, P_ATM } from '../sim/steam';
 import type { Vec2 } from '../sim/valveGear';
 import { PART_COLORS, PART_LABELS, cssHex, prepareCanvas, pressureCss } from './colors';
@@ -45,6 +47,29 @@ function arrow(g: G, x0: number, y0: number, x1: number, y1: number, head = 5): 
   g.fill();
 }
 
+/** Wrap prose at words, falling back to characters for unspaced CJK text. */
+function wrappedText(g: G, text: string, x: number, y: number, width: number, lineHeight = 14): void {
+  let line = '';
+  for (const word of text.split(/(\s+)/)) {
+    if (line && g.measureText(line + word).width > width) {
+      g.fillText(line.trimEnd(), x, y);
+      line = '';
+      y += lineHeight;
+    }
+    if (g.measureText(word).width > width) {
+      for (const char of word) {
+        if (g.measureText(line + char).width > width) {
+          g.fillText(line, x, y);
+          line = '';
+          y += lineHeight;
+        }
+        line += char;
+      }
+    } else line += line ? word : word.trimStart();
+  }
+  if (line) g.fillText(line.trimEnd(), x, y);
+}
+
 export class Diagrams {
   tab: DockTab = 'section';
   private readonly open: PortOpenings = { admFront: 0, admBack: 0, exhFront: 0, exhBack: 0 };
@@ -75,7 +100,7 @@ export class Diagrams {
   }
 
   private get phi(): number {
-    return this.sim.phi + (SIDE * Math.PI) / 2;
+    return sidePhase(this.sim.phi, SIDE);
   }
 
   private get direction(): number {
@@ -112,7 +137,7 @@ export class Diagrams {
     const chestHalf = vOut + 0.0042;
     const rodOut = 0.011;
 
-    const info = W > 640 ? 320 : 0;
+    const info = W > 740 ? 360 : 0;
     const secW = W - info;
     const spanX = 2 * (half + WALL) + rodOut;
     const spanY = chestTop + bore + 2 * WALL;
@@ -140,19 +165,22 @@ export class Diagrams {
     rect(xp + PT, -bore, half, bore);
     g.fillStyle = pressureCss(P[iB]);
     rect(-half, -bore, xp - PT, bore);
-    // passages from the port face down to the two cylinder ends
+    // Drawing 9 crosses the passages in separate planes; the outline marks a crossing, not a junction.
     for (const s of [1, -1]) {
-      g.fillStyle = pressureCss(P[s === 1 ? iF : iB]);
+      g.fillStyle = pressureCss(P[s === 1 ? iB : iF]);
+      g.strokeStyle = '#3a4048';
+      g.lineWidth = 2;
       g.beginPath();
       g.moveTo(X(s * pIn), Y(face));
       g.lineTo(X(s * pOut), Y(face));
       g.lineTo(X(s * pOut), Y(face - 0.0008));
-      g.lineTo(X(s * half), Y(bore + 0.0018));
-      g.lineTo(X(s * half), Y(bore));
-      g.lineTo(X(s * (half - 0.0022)), Y(bore));
+      g.lineTo(X(-s * half), Y(bore + 0.0018));
+      g.lineTo(X(-s * half), Y(bore));
+      g.lineTo(X(-s * (half - 0.0022)), Y(bore));
       g.lineTo(X(s * pIn), Y(face - 0.0024));
       g.closePath();
       g.fill();
+      g.stroke();
     }
     // exhaust port leading out of the page to the blast pipe
     g.fillStyle = exhaust;
@@ -185,10 +213,10 @@ export class Diagrams {
       arrow(g, X(x), Y(face - 0.0028), X(x), Y(face + 0.0018));
       arrow(g, X(0), Y(face + 0.002), X(0), Y(face - 0.0034));
     };
-    if (o.admFront > 0) down((Math.max(pIn, xv + vOut) + pOut) / 2);
-    if (o.admBack > 0) down((-pOut + Math.min(-pIn, xv - vOut)) / 2);
-    if (o.exhFront > 0) up((pIn + Math.min(pOut, xv + vIn)) / 2);
-    if (o.exhBack > 0) up((Math.max(-pOut, xv - vIn) - pIn) / 2);
+    if (o.admBack > 0) down((Math.max(pIn, xv + vOut) + pOut) / 2);
+    if (o.admFront > 0) down((-pOut + Math.min(-pIn, xv - vOut)) / 2);
+    if (o.exhBack > 0) up((pIn + Math.min(pOut, xv + vIn)) / 2);
+    if (o.exhFront > 0) up((Math.max(-pOut, xv - vIn) - pIn) / 2);
 
     // labels
     const kgf = (pa: number) => ((pa - P_ATM) / KGF_CM2).toFixed(2);
@@ -196,28 +224,28 @@ export class Diagrams {
     g.textBaseline = 'alphabetic';
     g.textAlign = 'center';
     g.fillStyle = TEXT;
-    g.fillText(`汽室 ${kgf(sim.engine.chestP)} kgf/cm²`, X(0), Y(chestTop + WALL) - 5);
+    g.fillText(t('汽室 {pressure} kgf/cm²', { pressure: kgf(sim.engine.chestP) }), X(0), Y(chestTop + WALL) - 5);
     g.fillStyle = '#1f2328';
-    g.fillText('滑阀', X(xv), Y(face + 0.0031));
+    g.fillText(t('滑阀'), X(xv), Y(face + 0.0031), vOut * 2 * k - 4);
     const below = Y(-bore - WALL) + 15;
     for (const [x, name, pa, ph] of [
       [half / 2, '前端', P[iF], phF],
       [-half / 2, '后端', P[iB], phB],
     ] as const) {
       g.fillStyle = TEXT;
-      g.fillText(`${name} ${kgf(pa)} kgf/cm²`, X(x), below);
+      g.fillText(`${t(name)} ${kgf(pa)} kgf/cm²`, X(x), below, half * k - 4);
       g.fillStyle = PHASES[ph][1];
-      g.fillText(PHASES[ph][0], X(x), below + 14);
+      g.fillText(t(PHASES[ph][0]), X(x), below + 14);
     }
     g.fillStyle = DIM;
     g.textAlign = 'left';
-    g.fillText('活塞杆 → 十字头', X(-half - WALL - rodOut), Y(0.001) - 5);
-    g.fillText('← 后', 8, below + 14);
+    g.fillText(t('活塞杆 → 十字头'), X(-half - WALL - rodOut), Y(0.001) - 5, rodOut * k + 40);
+    g.fillText(t('← 后'), 8, below + 14);
     g.textAlign = 'right';
-    g.fillText('前 →', secW - 8, below + 14);
+    g.fillText(t('前 →'), secW - 8, below + 14);
     g.textAlign = 'left';
     g.fillStyle = TEXT;
-    g.fillText('右侧气缸与滑阀纵剖面 · 中间圆孔为排汽口（通烟囱）', 8, 14);
+    g.fillText(t('右侧气缸与滑阀 · 交叉汽道不互通，中央排汽口通烟囱'), 8, 14, secW - 16);
 
     if (info) this.drawEventRing(g, secW, H, o);
   }
@@ -266,12 +294,12 @@ export class Diagrams {
     line(g, { x: cx + R + 2, y: cy }, { x: cx + R + 7, y: cy });
     line(g, { x: cx - R - 2, y: cy }, { x: cx - R - 7, y: cy });
     g.textAlign = 'left';
-    g.fillText('前', cx + R + 9, cy + 4);
+    g.fillText(t('前'), cx + R + 9, cy + 4);
     g.textAlign = 'right';
-    g.fillText('后', cx - R - 9, cy + 4);
+    g.fillText(t('后'), cx - R - 9, cy + 4);
     g.textAlign = 'left';
     g.fillStyle = TEXT;
-    g.fillText('配气相位（外圈前端 / 内圈后端）', x0 + 8, 14);
+    g.fillText(t('配气相位（外圈前端 / 内圈后端）'), x0 + 8, 14, 344);
 
     let lx = x0 + 8;
     const ly = cy + R + 18;
@@ -279,22 +307,23 @@ export class Diagrams {
       g.fillStyle = color;
       g.fillRect(lx, ly - 9, 10, 10);
       g.fillStyle = TEXT;
-      g.fillText(name, lx + 13, ly);
-      lx += 46;
+      const text = t(name);
+      g.fillText(text, lx + 13, ly);
+      lx += g.measureText(text).width + 24;
     }
     g.fillStyle = DIM;
-    g.fillText('白线：曲柄位置；前 / 后：前、后死点', x0 + 8, ly + 16);
+    g.fillText(t('白线：曲柄位置；前 / 后：前、后死点'), x0 + 8, ly + 16, 344);
 
     const tx = cx + R + 26;
     const mm = (x: number) => (x * 1e3).toFixed(2);
     const deg = ((((a * 180) / Math.PI) % 360) + 360) % 360;
     const rows = [
-      `曲柄角 ${deg.toFixed(0)}°`,
-      `回动手柄 ${(sim.controls.reverser * 100).toFixed(0)}%`,
-      `进汽开度 前 ${mm(o.admFront)}`,
-      `　　　　 后 ${mm(o.admBack)} mm`,
-      `排汽开度 前 ${mm(o.exhFront)}`,
-      `　　　　 后 ${mm(o.exhBack)} mm`,
+      t('曲柄角 {angle}°', { angle: deg.toFixed(0) }),
+      t('回动手柄 {percent}%', { percent: (sim.controls.reverser * 100).toFixed(0) }),
+      t('进汽开度 前 {opening}', { opening: mm(o.admFront) }),
+      t('　　　　 后 {opening} mm', { opening: mm(o.admBack) }),
+      t('排汽开度 前 {opening}', { opening: mm(o.exhFront) }),
+      t('　　　　 后 {opening} mm', { opening: mm(o.exhBack) }),
     ];
     g.fillStyle = TEXT;
     rows.forEach((t, i) => g.fillText(t, tx, 44 + i * 15));
@@ -326,13 +355,13 @@ export class Diagrams {
     const vy = gp.valveSpindleY;
     const pose = sim.gear.solve(this.phi, sim.controls.reverser);
 
-    const xmin = -0.03;
+    const xmin = LAYOUT.driverX[3] - rw - 0.005;
     const xmax = x0 + half + 0.008;
     const ymin = -rw - 0.002;
     const ymax = vy + 0.013;
-    const k = Math.min((W - 30) / (xmax - xmin), (H - 34) / (ymax - ymin));
+    const k = Math.min((W - 30) / (xmax - xmin), (H - 50) / (ymax - ymin));
     const left = (W - (xmax - xmin) * k) / 2;
-    const top = 22 + (H - 34 - (ymax - ymin) * k) / 2;
+    const top = 38 + (H - 50 - (ymax - ymin) * k) / 2;
     const X = (m: number) => left + (m - xmin) * k;
     const Y = (m: number) => top + (ymax - m) * k;
     const S = (v: Vec2): Vec2 => ({ x: X(v.x), y: Y(v.y) });
@@ -354,7 +383,11 @@ export class Diagrams {
     const tag = (name: keyof typeof PART_COLORS, v: Vec2, dx: number, dy: number, align: CanvasTextAlign = 'center') => {
       g.fillStyle = cssHex(PART_COLORS[name]);
       g.textAlign = align;
-      g.fillText(PART_LABELS[name], X(v.x) + dx, Y(v.y) + dy);
+      const text = t(PART_LABELS[name]);
+      const width = g.measureText(text).width;
+      const x = X(v.x) + dx;
+      const offset = align === 'center' ? width / 2 : align === 'right' ? width : 0;
+      g.fillText(text, Math.max(offset + 4, Math.min(W - width + offset - 4, x)), Y(v.y) + dy);
     };
     const mid = (a: Vec2, b: Vec2): Vec2 => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
@@ -385,7 +418,7 @@ export class Diagrams {
         const q = sim.gear.solve((i * Math.PI) / 36, this.traceKey);
         this.traces[0].push(q.eccPin);
         this.traces[1].push(q.linkTail);
-        this.traces[2].push(q.leverMid);
+        this.traces[2].push(q.leverTop);
         this.traces[3].push(q.leverBottom);
       }
     }
@@ -426,10 +459,10 @@ export class Diagrams {
     const kk = (gp.dieMax + 0.002) / gp.linkTail;
     const linkTop = { x: pose.linkPivot.x + (pose.linkPivot.x - pose.linkTail.x) * kk, y: pose.linkPivot.y + (pose.linkPivot.y - pose.linkTail.y) * kk };
     bar('link', pose.linkTail, linkTop, 6);
-    bar('radiusRod', pose.dieBlock, pose.leverMid, 3);
+    bar('radiusRod', pose.dieBlock, pose.leverTop, 3);
     bar('lever', pose.leverTop, pose.leverBottom, 3);
     bar('union', pose.leverBottom, pose.dropPin, 3);
-    bar('valve', pose.leverTop, valveL, 3);
+    bar('valve', pose.leverMid, valveL, 3);
     g.fillStyle = cssHex(PART_COLORS.valve);
     rect(x0 + pose.valve - 0.0062, vy - 0.0022, x0 + pose.valve + 0.0062, vy + 0.0022);
     g.fillStyle = cssHex(PART_COLORS.radiusRod);
@@ -454,8 +487,8 @@ export class Diagrams {
     tag('coupling', { x: LAYOUT.driverX[3] / 2 + pose.crankPin.x, y: pose.crankPin.y }, 0, -8);
     g.fillStyle = cssHex(PART_COLORS.link);
     g.textAlign = 'center';
-    g.fillText(PART_LABELS.link + '（支点固定）', X(linkTop.x), Y(linkTop.y) - 9);
-    tag('radiusRod', mid(pose.dieBlock, pose.leverMid), 6, -8);
+    g.fillText(t(PART_LABELS.link) + t('（支点固定）'), X(linkTop.x), Y(linkTop.y) - 9);
+    tag('radiusRod', mid(pose.dieBlock, pose.leverTop), 6, -8);
     tag('lever', mid(pose.leverMid, pose.leverBottom), 8, 4, 'left');
     tag('union', mid(pose.leverBottom, pose.dropPin), 0, 16);
     tag('crosshead', { x: pose.crosshead.x, y: -0.0052 }, -10, 13, 'right');
@@ -467,13 +500,15 @@ export class Diagrams {
     line(g, { x: X(rc.x) + 8, y: Y(rc.y) - 12 }, S(mid(pose.crankPin, pose.eccPin)));
     g.fillStyle = DIM;
     g.textAlign = 'center';
-    g.fillText('气缸 / 活塞', X(x0), Y(-bore - WALL) + 14);
+    g.fillText(t('气缸 / 活塞'), X(x0), Y(-bore - WALL) + 14);
 
     g.fillStyle = TEXT;
     g.textAlign = 'left';
     const u = sim.controls.reverser;
     const gearName = Math.abs(u) < 0.03 ? '中立' : u > 0 ? '前进' : '后退';
-    g.fillText(`右侧 Walschaerts 配气机构 · 回动手柄 ${(u * 100).toFixed(0)}%（${gearName}）· 滑块离月牙板支点越远，阀行程越大；过支点则反向`, 8, 14);
+    wrappedText(g, t('右侧 Walschaerts 配气机构 · 回动手柄 {percent}%（{gear}）· 滑块离月牙板支点越远，阀行程越大；过支点则反向', {
+      percent: (u * 100).toFixed(0), gear: t(gearName),
+    }), 8, 14, W - 16);
   }
 
   // ---------------------------------------------------------------- water, steam and heat
@@ -501,9 +536,9 @@ export class Diagrams {
       g.stroke();
       g.textAlign = 'center';
       g.fillStyle = '#9ecbff';
-      g.fillText(title, x + w / 2, y + (value ? 15 : h / 2 + 4));
+      g.fillText(t(title), x + w / 2, y + (value ? 15 : h / 2 + 4), w - 6);
       g.fillStyle = TEXT;
-      if (value) g.fillText(value, x + w / 2, y + 30);
+      if (value) g.fillText(value, x + w / 2, y + 30, w - 6);
     };
     /** Polyline whose dashes travel at a speed following the flow; a stopped flow is drawn dim and solid. */
     const pipe = (id: string, pts: number[], color: string, flow: number, ref: number, width = 3) => {
@@ -527,7 +562,8 @@ export class Diagrams {
     const note = (text: string, x: number, y: number, color: string = DIM, align: CanvasTextAlign = 'center') => {
       g.fillStyle = color;
       g.textAlign = align;
-      g.fillText(text, x, y);
+      const width = align === 'left' ? 748 - x : align === 'right' ? x - 8 : 2 * Math.min(x - 8, 748 - x);
+      g.fillText(text, x, y, width);
     };
 
     const water = cssHex(C.water);
@@ -560,10 +596,15 @@ export class Diagrams {
     node(628, 104, 62, 40, '气缸 ×2', watts(sim.indicatedPower));
     node(628, 176, 62, 40, '车轮', watts(wheelPower));
     node(12, 184, 92, 40, '酒精箱', (sim.fuel * 1e6).toFixed(0) + ' mL');
-    node(250, 184, 170, 40, '酒精燃烧器', sim.lit ? `火力 ${(sim.fireGain * 100).toFixed(0)}% · ${watts(sim.firePower)}` : '未点火');
+    node(250, 184, 170, 40, '酒精燃烧器', sim.lit ? t('火力 {percent}% · {power}', { percent: (sim.fireGain * 100).toFixed(0), power: watts(sim.firePower) }) : t('未点火'));
     node(712, 28, 36, 152, '', '');
-    note('烟', 730, 96, '#9ecbff');
-    note('囱', 730, 112, '#9ecbff');
+    g.save();
+    g.translate(734, 104);
+    g.rotate(-Math.PI / 2);
+    g.textAlign = 'center';
+    g.fillStyle = '#9ecbff';
+    g.fillText(t('烟囱'), 0, 0, 136);
+    g.restore();
 
     // boiler: water below (colour = temperature), steam above (colour = pressure)
     const bx = 250;
@@ -597,27 +638,30 @@ export class Diagrams {
     g.strokeRect(bx + 8, 98, bw - 8, 28);
     pipe('flue', [266, 184, 266, 119, 440, 119, 440, 240, 730, 240, 730, 180], gas, sim.lit ? flueLoss : 0, 1000);
     for (const x of [300, 345, 390]) pipe('heat' + x, [x, 97, x, 81], heat, sim.heatToWater, 600, 2);
-    note('烟管 ×2（内插过热器）', bx + bw / 2 + 10, 110, '#ffffff');
-    note(`锅炉 · 水位 ${(b.glass * 100).toFixed(0)}%`, bx + bw / 2, by + 15, '#ffffff');
+    note(t('烟管 ×2（内插过热器）'), bx + bw / 2 + 10, 110, '#ffffff');
+    note(t('锅炉 · 水位 {percent}%', { percent: (b.glass * 100).toFixed(0) }), bx + bw / 2, by + 15, '#ffffff');
     note(`${(b.gaugePressure / KGF_CM2).toFixed(2)} kgf/cm² · ${(b.T - 273.15).toFixed(0)} °C`, bx + bw / 2, by + 31, '#ffffff');
 
-    note('给水 ' + gps(sim.feedFlow), 230, 68, water);
-    note('旁通回水 ' + gps(Math.max(0, sim.pumpFlow - sim.feedFlow)), 142, 156, cssHex(C.bypass));
-    note('蒸汽 ' + gps(sim.steamFlow), 528, 36, TEXT);
-    note('通风阀 ' + gps(sim.blowerFlow), 565, 16, DIM);
-    note(sim.safetyOpen ? '安全阀开' : '安全阀', 290, 12, sim.safetyOpen ? '#f85149' : DIM);
-    note('酒精 ' + burnMl.toFixed(1) + ' mL/min', 177, 198, cssHex(C.fuel));
-    note('传给水 ' + watts(sim.heatToWater), 345, 163, heat);
-    note('两根 U 形管，插在烟管内', 572, 93, DIM);
-    note('烟气带走 ' + watts(flueLoss), 545, 234, cssHex(C.gas));
-    note('散热 ' + watts(sim.boilerLoss), 246, 30, DIM, 'right');
-    note('排汽', 701, 112, DIM);
-    note('活塞功', 664, 164, '#e3b341', 'left');
-    note(c.fan ? '通风机抽风' : '排汽 / 通风阀抽风', 722, 232, DIM, 'right');
+    note(t('给水') + ' ' + gps(sim.feedFlow), 238, 68, water, 'right');
+    note(t('旁通回水') + ' ' + gps(Math.max(0, sim.pumpFlow - sim.feedFlow)), 142, 156, cssHex(C.bypass));
+    note(t('蒸汽') + ' ' + gps(sim.steamFlow), 528, 36, TEXT);
+    note(t('通风阀') + ' ' + gps(sim.blowerFlow), 565, 16, DIM);
+    note(t(sim.safetyOpen ? '安全阀开' : '安全阀'), 290, 12, sim.safetyOpen ? '#f85149' : DIM);
+    note(t('酒精') + ' ' + burnMl.toFixed(1) + ' mL/min', 177, 198, cssHex(C.fuel));
+    note(t('传给水') + ' ' + watts(sim.heatToWater), 345, 163, heat);
+    note(t('两根 U 形管，插在烟管内'), 572, 93, DIM);
+    note(t('烟气带走') + ' ' + watts(flueLoss), 512, 234, cssHex(C.gas));
+    note(t('散热') + ' ' + watts(sim.boilerLoss), 246, 30, DIM, 'right');
+    note(t('排汽'), 706, 153, DIM, 'right');
+    note(t('活塞功'), 651, 164, '#e3b341', 'right');
+    note(t(c.fan ? '通风机抽风' : '排汽 / 通风阀抽风'), 722, 232, DIM, 'right');
 
     const pct = (a: number, base: number) => (base > 1 ? ((100 * a) / base).toFixed(1) + '%' : '–');
     note(
-      `能量：燃料 ${watts(sim.firePower)} → 水 ${watts(sim.heatToWater)}（${pct(sim.heatToWater, sim.firePower)}）→ 指示功 ${watts(sim.indicatedPower)} → 轮周 ${watts(wheelPower)} · 总效率 ${pct(wheelPower, sim.firePower)}`,
+      t('能量：燃料 {fuel} → 水 {water}（{waterEfficiency}）→ 指示功 {indicated} → 轮周 {wheel} · 总效率 {efficiency}', {
+        fuel: watts(sim.firePower), water: watts(sim.heatToWater), waterEfficiency: pct(sim.heatToWater, sim.firePower),
+        indicated: watts(sim.indicatedPower), wheel: watts(wheelPower), efficiency: pct(wheelPower, sim.firePower),
+      }),
       12,
       264,
       TEXT,

@@ -1,6 +1,7 @@
 import { Boiler } from './boiler';
 import { Engine } from './engine';
 import type { LocoParams } from './params';
+import { pumpDisplacement } from './runningGear';
 import { KGF_CM2, P_ATM, orificeFlow, tSat } from './steam';
 import { ValveGear } from './valveGear';
 
@@ -88,7 +89,8 @@ export class LocoSim {
   private steamAcc = 0;
   private exhaustAcc = 0;
   private drainAcc = 0;
-  private revAcc = 0;
+  /** Delivered axle-pump volume [m3] awaiting the next boiler step. */
+  private pumpVolumeAcc = 0;
   private handPending = 0;
 
   constructor(readonly params: LocoParams) {
@@ -114,6 +116,7 @@ export class LocoSim {
     this.fireGain = this.superheat = this.firePower = this.heatToWater = this.boilerLoss = 0;
     this.exhaustFlow = this.steamFlow = this.blowerFlow = this.safetyFlow = this.drainFlow = this.feedFlow = this.pumpFlow = 0;
     this.tractiveForce = this.indicatedPower = this.slip = 0;
+    this.acc = this.boilerClock = this.steamAcc = this.exhaustAcc = this.drainAcc = this.pumpVolumeAcc = this.handPending = 0;
   }
 
   /** In steam at 3.5 kgf/cm2 with warm cylinders, ready to pull away. */
@@ -247,9 +250,10 @@ export class LocoSim {
     }
     this.omega = vrNew / rw;
     this.v = vNew;
+    const fromPhi = this.phi;
     this.phi += this.omega * dt;
     this.distance += this.v * dt;
-    this.revAcc += (Math.abs(this.omega) * dt) / (2 * Math.PI);
+    this.pumpVolumeAcc += pumpDisplacement(fromPhi, this.phi, p.feed.axlePumpPerRev);
     this.indicatedPower += (e.torque * this.omega - this.indicatedPower) * Math.min(1, dt / 0.3);
   }
 
@@ -269,9 +273,9 @@ export class LocoSim {
     const mBlowdown = c.blowdown && gauge > 0 ? b.blowdownCdA * Math.sqrt((2 * gauge) / this.boiler.props.vf) * dt : 0;
 
     // feed water: axle pump (less what the bypass returns to the tender) and hand pump
-    const pumpVol = this.tenderWater > 0 ? this.revAcc * p.feed.axlePumpPerRev : 0;
+    const pumpVol = this.tenderWater > 0 ? this.pumpVolumeAcc : 0;
     const feedVol = Math.min(this.tenderWater, pumpVol * (1 - c.bypass) + this.handPending);
-    this.revAcc = 0;
+    this.pumpVolumeAcc = 0;
     this.handPending = 0;
     this.tenderWater -= feedVol;
     const mFeed = feedVol * RHO_WATER;

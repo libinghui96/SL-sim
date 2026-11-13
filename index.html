@@ -4,25 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#14181c" />
-    <title>SL-sim · Aster D51 live steam</title>
+    <title data-i18n>SL-sim · Aster D51 实火蒸汽机车</title>
   </head>
   <body>
     <div id="view"></div>
 
     <header id="top">
-      <strong>Aster D51 · 1 号轨 · 酒精烧</strong>
+      <strong data-i18n>Aster D51 · 1 号轨 · 酒精烧</strong>
       <div id="settings">
-      <span class="group">
-        <button id="presetCold">冷态开始</button>
-        <button id="presetHot">热态开始</button>
-      </span>
-      <label>模式
-        <select id="mode">
-          <option value="track">轨道</option>
-          <option value="rollers">滚轮台</option>
+      <label data-i18n>语言
+        <select id="locale">
+          <option value="zh-CN" lang="zh-CN">简体中文</option>
+          <option value="ja" lang="ja">日本語</option>
+          <option value="en" lang="en">English</option>
         </select>
       </label>
-      <label>时间倍率
+      <span class="group">
+        <button id="presetCold" data-i18n>冷态开始</button>
+        <button id="presetHot" data-i18n>热态开始</button>
+      </span>
+      <label data-i18n>模式
+        <select id="mode">
+          <option value="track" data-i18n>轨道</option>
+          <option value="rollers" data-i18n>滚轮台</option>
+        </select>
+      </label>
+      <label data-i18n>时间倍率
         <select id="timeScale">
           <option value="0.1">0.1×</option>
           <option value="0.25">0.25×</option>
@@ -31,87 +38,89 @@
           <option value="20">20×</option>
         </select>
       </label>
-      <label><input type="checkbox" id="paused" /> 暂停</label>
-      <label>拖重 <input type="number" id="trainMass" min="0" max="40" step="1" value="0" /> kg</label>
-      <label>坡度 <input type="number" id="grade" min="-40" max="40" step="1" value="0" /> ‰</label>
+      <label data-i18n><input type="checkbox" id="paused" /> 暂停</label>
+      <label data-i18n>拖重 <input type="number" id="trainMass" min="0" max="40" step="1" value="0" /> kg</label>
+      <label data-i18n>坡度 <input type="number" id="grade" min="-40" max="40" step="1" value="0" /> ‰</label>
       <span class="sep"></span>
-      <label>视图
+      <label data-i18n>视图
         <select id="viewMode">
-          <option value="normal">外观</option>
-          <option value="xray">剖视</option>
-          <option value="mech">机构</option>
+          <option value="normal" data-i18n>外观</option>
+          <option value="xray" data-i18n>剖视</option>
+          <option value="mech" data-i18n>机构</option>
         </select>
       </label>
-      <label><input type="checkbox" id="flow" /> 流向</label>
-      <label><input type="checkbox" id="labels" /> 标注</label>
-      <label>拆解 <input type="range" id="explode" min="0" max="100" value="0" /></label>
+      <label data-i18n><input type="checkbox" id="flow" /> 流向</label>
+      <label data-i18n><input type="checkbox" id="labels" /> 标注</label>
+      <label data-i18n>拆解 <input type="range" id="explode" min="0" max="100" value="0" /></label>
       </div>
+      <button id="openPhase" type="button" aria-controls="phaseBoard" title="打开相位监视" data-i18n data-i18n-attrs="title">相位</button>
       <span id="clock"></span>
     </header>
 
     <div id="legend" hidden></div>
-    <div id="toast" hidden></div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
 
     <aside id="controls" class="panel">
-      <h2>下一步</h2>
+      <h2 data-i18n>下一步</h2>
       <div id="hint"></div>
-      <h2>操作</h2>
-      <label class="slider">加减阀 <output id="regulatorOut"></output><input type="range" id="regulator" min="0" max="100" value="0" /></label>
-      <label class="slider">回动手柄（后退 ← 中立 → 前进） <output id="reverserOut"></output><input type="range" id="reverser" min="-100" max="100" value="100" /></label>
-      <label class="slider">通风阀 <output id="blowerOut"></output><input type="range" id="blower" min="0" max="100" value="0" /></label>
-      <label class="slider">燃料阀 <output id="fuelValveOut"></output><input type="range" id="fuelValve" min="0" max="100" value="0" /></label>
-      <label class="slider">旁通阀（0 = 轴泵全部给水） <output id="bypassOut"></output><input type="range" id="bypass" min="0" max="100" value="100" /></label>
+      <h2 data-i18n>操作</h2>
+      <label class="slider" data-i18n>加减阀 <output id="regulatorOut"></output><input type="range" id="regulator" min="0" max="100" value="0" /></label>
+      <label class="slider" data-i18n>回动手柄（后退 ← 中立 → 前进） <output id="reverserOut"></output><input type="range" id="reverser" min="-100" max="100" value="100" /></label>
+      <label class="slider" data-i18n>通风阀 <output id="blowerOut"></output><input type="range" id="blower" min="0" max="100" value="0" /></label>
+      <label class="slider" data-i18n>燃料阀 <output id="fuelValveOut"></output><input type="range" id="fuelValve" min="0" max="100" value="0" /></label>
+      <label class="slider" data-i18n>旁通阀（0 = 轴泵全部给水） <output id="bypassOut"></output><input type="range" id="bypass" min="0" max="100" value="100" /></label>
       <div class="row">
-        <label><input type="checkbox" id="drains" /> 气缸排水阀</label>
-        <label><input type="checkbox" id="fan" /> 烟囱通风机</label>
-        <label><input type="checkbox" id="blowdown" /> 锅炉排水阀</label>
+        <label data-i18n><input type="checkbox" id="drains" /> 气缸排水阀</label>
+        <label data-i18n><input type="checkbox" id="fan" /> 烟囱通风机</label>
+        <label data-i18n><input type="checkbox" id="blowdown" /> 锅炉排水阀</label>
       </div>
       <div class="row">
-        <button id="ignite">点火</button>
-        <button id="extinguish">熄火</button>
-        <button id="handPump">手摇泵</button>
-        <button id="whistle">汽笛</button>
+        <button id="ignite" data-i18n>点火</button>
+        <button id="extinguish" data-i18n>熄火</button>
+        <button id="handPump" data-i18n>手摇泵</button>
+        <button id="whistle" data-i18n>汽笛</button>
       </div>
       <div class="row">
-        <button id="pushBack">← 推</button>
-        <button id="pushFwd">推 →</button>
-        <button id="fillFuel">加燃料</button>
-        <button id="fillTender">水柜加水</button>
-        <button id="fillOil">加油</button>
+        <button id="pushBack" data-i18n>← 推</button>
+        <button id="pushFwd" data-i18n>推 →</button>
+        <button id="fillFuel" data-i18n>加燃料</button>
+        <button id="fillTender" data-i18n>水柜加水</button>
+        <button id="fillOil" data-i18n>加油</button>
       </div>
-      <h2>配气事件（当前回动位置）</h2>
+      <h2 data-i18n>配气事件（当前回动位置）</h2>
       <table id="events"></table>
     </aside>
 
     <aside id="gauges" class="panel">
-      <h2>仪表</h2>
+      <h2 data-i18n>仪表</h2>
+      <section id="phaseBoard" aria-labelledby="phaseTitle" tabindex="-1"></section>
       <div class="row">
-        <canvas id="pressure"></canvas>
-        <canvas id="glass"></canvas>
-        <div id="warnings"></div>
+        <canvas id="pressure" role="img" aria-label="锅炉压力表" data-i18n-attrs="aria-label"></canvas>
+        <canvas id="glass" role="img" aria-label="锅炉水位玻璃管" data-i18n-attrs="aria-label"></canvas>
+        <div id="warnings" role="status" aria-live="polite"></div>
       </div>
       <table id="readouts"></table>
-      <h2>示功图（右缸：实线前端，虚线后端）</h2>
-      <canvas id="indicator"></canvas>
+      <h2 data-i18n>示功图（右缸：实线前端，虚线后端）</h2>
+      <canvas id="indicator" role="img" aria-label="右缸压力容积示功图" data-i18n-attrs="aria-label"></canvas>
     </aside>
 
     <section id="dock" class="panel">
       <div class="tabs">
-        <button data-tab="section">气缸与滑阀</button>
-        <button data-tab="gear">配气机构</button>
-        <button data-tab="flow">汽水与热量</button>
+        <button data-tab="section" data-i18n>气缸与滑阀</button>
+        <button data-tab="gear" data-i18n>配气机构</button>
+        <button data-tab="flow" data-i18n>汽水与热量</button>
         <button id="dockToggle">收起</button>
       </div>
-      <div class="scroll"><canvas id="diagram"></canvas></div>
+      <div class="scroll"><canvas id="diagram" role="img" aria-label="机车原理动态图" data-i18n-attrs="aria-label"></canvas></div>
     </section>
 
     <!-- phones, tablets and small windows: one panel at a time, chosen here -->
     <nav id="mtabs">
-      <button data-sheet="controls">操作</button>
-      <button data-sheet="gauges">仪表</button>
-      <button data-sheet="dock">原理图</button>
-      <button data-sheet="settings">设置</button>
-      <button id="sheetToggle" aria-label="收起或展开面板">▾</button>
+      <button data-sheet="controls" data-i18n>操作</button>
+      <button data-sheet="gauges" data-i18n>仪表</button>
+      <button data-sheet="dock" data-i18n>原理图</button>
+      <button data-sheet="settings" data-i18n>设置</button>
+      <button id="sheetToggle" aria-label="收起或展开面板" data-i18n-attrs="aria-label">▾</button>
     </nav>
 
     <script type="module" src="/src/main.ts"></script>

@@ -1,4 +1,5 @@
 import type { LocoParams } from './params';
+import { sidePhase } from './runningGear';
 import { CP_STEAM, CV_STEAM, GAMMA, P_ATM, R_STEAM, orificeFlow, tSat } from './steam';
 import type { ValveGear } from './valveGear';
 
@@ -15,19 +16,20 @@ export interface PortOpenings {
   exhBack: number;
 }
 
-/** Port opening widths [m] of an outside-admission slide valve displaced xv from mid position. */
+/** Aster drawing 9: outside-admission slide valve with crossed passages to the cylinder ends. */
 export function portOpenings(e: LocoParams['engine'], xv: number, out: PortOpenings): PortOpenings {
   const w = e.portWidth;
-  out.admBack = Math.min(w, Math.max(0, xv - e.steamLap));
-  out.admFront = Math.min(w, Math.max(0, -xv - e.steamLap));
-  out.exhFront = Math.min(w, Math.max(0, xv - e.exhaustLap));
-  out.exhBack = Math.min(w, Math.max(0, -xv - e.exhaustLap));
+  out.admFront = Math.min(w, Math.max(0, xv - e.steamLap));
+  out.admBack = Math.min(w, Math.max(0, -xv - e.steamLap));
+  out.exhBack = Math.min(w, Math.max(0, xv - e.exhaustLap));
+  out.exhFront = Math.min(w, Math.max(0, -xv - e.exhaustLap));
   return out;
 }
 
 /**
  * Two double-acting cylinders fed from a common steam chest.
- * Control volume index = side * 2 + end; side 0 = left, 1 = right (leads by 90°); end 0 = front, 1 = back.
+ * Control volume index = side * 2 + end; side 0 = left, 1 = right; end 0 = front, 1 = back.
+ * Right leads by 90° in the current model convention, not a measured drawing handedness.
  */
 export class Engine {
   readonly m = new Float64Array(4);
@@ -82,7 +84,7 @@ export class Engine {
 
   reset(T: number, phi: number): void {
     for (let side = 0; side < 2; side++) {
-      const x = this.gear.piston(phi + (side * Math.PI) / 2);
+      const x = this.gear.piston(sidePhase(phi, side));
       this.wallT[side] = T;
       for (let end = 0; end < 2; end++) {
         const i = side * 2 + end;
@@ -140,7 +142,7 @@ export class Engine {
     let liquidOut = 0;
 
     for (let side = 0; side < 2; side++) {
-      const ps = phi + (side * Math.PI) / 2;
+      const ps = sidePhase(phi, side);
       const x = this.gear.piston(ps);
       const dx = this.gear.dPiston(ps);
       portOpenings(e, this.gear.valveAt(ps), this.open);

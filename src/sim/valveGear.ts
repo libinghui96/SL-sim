@@ -18,7 +18,9 @@ export interface GearPose {
   linkTail: Vec2;
   linkAngle: number;
   dieBlock: Vec2;
+  /** Radius-rod attachment above the valve spindle, as in Aster drawing 9. */
   leverTop: Vec2;
+  /** Valve-spindle attachment. */
   leverMid: Vec2;
   leverBottom: Vec2;
   /** valve displacement from mid position, + = forward */
@@ -65,11 +67,11 @@ export class ValveGear {
     this.e = p.engine;
     this.crankRadius = p.engine.stroke / 2;
     this.leverX = g.conRod + g.dropArmX + g.unionLink;
-    this.pivot = { x: this.leverX - g.radiusRod, y: g.valveSpindleY - g.leverUpper };
-    // Return crank set so the link stands at mid position at both dead centres (equal leads in every gear).
+    this.pivot = { x: this.leverX - g.radiusRod, y: g.valveSpindleY + g.leverUpper };
+    // Drawing 9 has a trailing return crank; this setting centres the estimated link at both dead centres.
     const tx = this.pivot.x;
     const ty = this.pivot.y - g.linkTail;
-    this.eccAdvance = Math.atan2(tx, ty);
+    this.eccAdvance = Math.atan2(tx, ty) - Math.PI;
     this.eccRod = Math.sqrt(tx * tx + ty * ty + g.returnCrankRadius * g.returnCrankRadius);
     // Valve set on its spindle so the travel is centred over the ports, averaged over both gears.
     let zero = 0;
@@ -77,7 +79,7 @@ export class ValveGear {
       let lo = Infinity;
       let hi = -Infinity;
       for (let i = 0; i < 360; i++) {
-        const x = this.solve((i * TWO_PI) / 360, u).leverTop.x;
+        const x = this.solve((i * TWO_PI) / 360, u).leverMid.x;
         lo = Math.min(lo, x);
         hi = Math.max(hi, x);
       }
@@ -127,9 +129,9 @@ export class ValveGear {
     const ly = g.radiusRod * Math.sin(a);
     const dieBlock = { x: K.x + lx * c - ly * s, y: K.y + lx * s + ly * c };
 
-    // combination lever: top pin on the valve spindle line, mid pin on the radius rod, bottom pin on the union link
-    const la = g.leverUpper;
-    const lb = g.leverUpper + g.leverLower;
+    // Drawing 9: radius rod above the spindle, union link below it.
+    const la = -g.leverUpper;
+    const lb = g.leverLower;
     let xv = this.leverX;
     let beta = 0;
     for (let it = 0; it < 20; it++) {
@@ -163,8 +165,8 @@ export class ValveGear {
       linkTail,
       linkAngle: psi,
       dieBlock,
-      leverTop: { x: xv, y: g.valveSpindleY },
-      leverMid: { x: xv + la * sb, y: g.valveSpindleY - la * cb },
+      leverTop: { x: xv + la * sb, y: g.valveSpindleY - la * cb },
+      leverMid: { x: xv, y: g.valveSpindleY },
       leverBottom: { x: xv + lb * sb, y: g.valveSpindleY - lb * cb },
       valve: xv - this.valveZero,
       piston,
@@ -201,7 +203,7 @@ export class ValveGear {
       hi = Math.max(hi, xs[k]);
     }
     const end = (front: boolean): EndEvents => {
-      const sgn = front ? -1 : 1;
+      const sgn = front ? 1 : -1;
       const k0 = front ? 0 : steps / 2;
       const strokePct = (k: number) => {
         const x = this.piston((dir * (k0 + k) * TWO_PI) / steps);

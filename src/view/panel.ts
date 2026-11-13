@@ -1,9 +1,11 @@
+import { getLocale, onLocaleChange, setLocale, t } from '../i18n';
 import type { LocoSim, Mode, Warning } from '../sim/loco';
 import { KGF_CM2, P_ATM } from '../sim/steam';
 import { cssHex, prepareCanvas } from './colors';
 import { Diagrams, type DockTab } from './diagrams';
 import { FLOW_COLORS, FLOW_LEGEND } from './flow';
 import type { ViewMode } from './locoModel';
+import { PhaseBoard } from './phaseBoard';
 import type { LocoView } from './scene';
 
 export interface AppState {
@@ -38,21 +40,31 @@ export class Panel {
   private readonly readouts: [string, () => string][];
   private readonly cells: HTMLElement[] = [];
   private readonly diagrams: Diagrams;
+  private readonly phaseBoard: PhaseBoard;
   private eventsFor = NaN;
   private frame = 0;
   private toastTimer = 0;
+  private toastSource = '';
 
   constructor(
     private readonly sim: LocoSim,
     view: LocoView,
     state: AppState,
   ) {
+    const locale = $<HTMLSelectElement>('locale');
+    locale.value = getLocale();
+    locale.addEventListener('change', () => setLocale(locale.value));
+    // Translated settings can occupy another header row on desktop.
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--top-height', `${$('top').getBoundingClientRect().height}px`);
+    }).observe($('top'));
     const c = sim.controls;
     for (const key of SLIDERS) {
       const input = $<HTMLInputElement>(key);
       input.addEventListener('input', () => {
         c[key] = Number(input.value) / 100;
         $(key + 'Out').textContent = input.value + '%';
+        if (key === 'reverser') this.phaseBoard.update();
       });
     }
     for (const key of TOGGLES) {
@@ -105,21 +117,30 @@ export class Panel {
     };
     for (const el of [mode, timeScale, paused, trainMass, grade]) el.addEventListener('change', applyRun);
     applyRun();
+    this.phaseBoard = new PhaseBoard(sim, state, $('phaseBoard'));
+    paused.addEventListener('change', () => this.phaseBoard.update());
 
     // 3D view options
     const viewMode = $<HTMLSelectElement>('viewMode');
     const flow = $<HTMLInputElement>('flow');
     const labels = $<HTMLInputElement>('labels');
     const legend = $('legend');
+    const legendLabels: [HTMLElement, string][] = [];
     for (const [key, text] of FLOW_LEGEND) {
       const item = legend.appendChild(document.createElement('button'));
-      item.textContent = text;
+      item.textContent = t(text);
+      legendLabels.push([item, text]);
       item.style.setProperty('--c', cssHex(FLOW_COLORS[key]));
-      item.addEventListener('click', () => view.setFlowKind(key, !item.classList.toggle('off')));
+      item.setAttribute('aria-pressed', 'true');
+      item.addEventListener('click', () => {
+        const on = !item.classList.toggle('off');
+        item.setAttribute('aria-pressed', String(on));
+        view.setFlowKind(key, on);
+      });
     }
     const tip = legend.appendChild(document.createElement('span'));
     tip.className = 'tip';
-    tip.textContent = '点按可单独隐藏或显示';
+    tip.textContent = t('点按可单独隐藏或显示');
     const applyView = () => {
       view.setView(viewMode.value as ViewMode, flow.checked, labels.checked);
       legend.hidden = !flow.checked;
@@ -139,7 +160,8 @@ export class Panel {
     const applyDock = () => {
       const collapsed = dock.classList.contains('collapsed') && !compact.matches;
       for (const t of tabs) t.classList.toggle('on', !collapsed && t.dataset.tab === this.diagrams.tab);
-      $('dockToggle').textContent = collapsed ? '展开' : '收起';
+      $('dockToggle').textContent = t(collapsed ? '展开' : '收起');
+      $('dockToggle').setAttribute('aria-expanded', String(!collapsed));
       // in the compact layout the view has its own area, nothing covers it
       view.setBottomInset(collapsed || compact.matches ? 0 : DOCK_HEIGHT);
       view.setSideInset(compact.matches ? 0 : SIDE_PANEL);
@@ -166,6 +188,7 @@ export class Panel {
       const open = !body.classList.contains('sheet-closed');
       for (const t of sheetTabs) t.classList.toggle('on', open && t.dataset.sheet === body.dataset.sheet);
       $('sheetToggle').textContent = open ? '▾' : '▴';
+      $('sheetToggle').setAttribute('aria-expanded', String(open));
     };
     for (const t of sheetTabs) {
       t.addEventListener('click', () => {
@@ -182,6 +205,15 @@ export class Panel {
     body.dataset.sheet = 'controls';
     applySheet();
 
+    $('openPhase').addEventListener('click', () => {
+      body.dataset.sheet = 'gauges';
+      body.classList.remove('sheet-closed');
+      applySheet();
+      $('gauges').scrollTop = 0;
+      $('phaseBoard').focus({ preventScroll: true });
+      this.phaseBoard.update();
+    });
+
     const e = sim.engine;
     const b = sim.boiler;
     const kgf = (P: number) => ((P - P_ATM) / KGF_CM2).toFixed(2) + ' kgf/cm²';
@@ -190,13 +222,13 @@ export class Panel {
       ['汽室压力', () => kgf(e.chestP)],
       ['锅炉温度', () => (b.T - 273.15).toFixed(0) + ' °C'],
       ['水位（玻璃管）', () => (Math.min(1.2, Math.max(-0.2, b.glass)) * 100).toFixed(0) + ' %'],
-      ['速度', () => `${sim.v.toFixed(2)} m/s（实车 ${sim.speedScaleKmh.toFixed(0)} km/h）`],
+      ['速度', () => t('{speed} m/s（实车 {scaleSpeed} km/h）', { speed: sim.v.toFixed(2), scaleSpeed: sim.speedScaleKmh.toFixed(0) })],
       ['动轮转速', () => (sim.omega / (2 * Math.PI)).toFixed(1) + ' r/s'],
       ['牵引力', () => sim.tractiveForce.toFixed(1) + ' N'],
       ['指示功率', () => sim.indicatedPower.toFixed(1) + ' W'],
       ['耗汽量', () => (sim.steamFlow * 1e3).toFixed(3) + ' g/s'],
       ['给水量', () => (sim.feedFlow * 1e3).toFixed(3) + ' g/s'],
-      ['火力', () => (sim.lit ? `${(sim.fireGain * 100).toFixed(0)} %（${sim.firePower.toFixed(0)} W）` : '未点火')],
+      ['火力', () => sim.lit ? t('{percent} %（{power} W）', { percent: (sim.fireGain * 100).toFixed(0), power: sim.firePower.toFixed(0) }) : t('未点火')],
       ['过热度', () => sim.superheat.toFixed(0) + ' K'],
       ['缸壁温度 左 / 右', () => `${(e.wallT[0] - 273.15).toFixed(0)} / ${(e.wallT[1] - 273.15).toFixed(0)} °C`],
       ['燃料', () => (sim.fuel * 1e6).toFixed(0) + ' mL'],
@@ -204,17 +236,32 @@ export class Panel {
       ['润滑油', () => (sim.oil * 100).toFixed(0) + ' %'],
     ];
     const table = $('readouts');
+    const readoutLabels: HTMLElement[] = [];
     for (const [label] of this.readouts) {
       const row = table.appendChild(document.createElement('tr'));
-      row.appendChild(document.createElement('td')).textContent = label;
+      const cell = row.appendChild(document.createElement('td'));
+      cell.textContent = t(label);
+      readoutLabels.push(cell);
       this.cells.push(row.appendChild(document.createElement('td')));
     }
     this.syncControls();
+    onLocaleChange(() => {
+      locale.value = getLocale();
+      for (const [el, source] of legendLabels) el.textContent = t(source);
+      tip.textContent = t('点按可单独隐藏或显示');
+      readoutLabels.forEach((el, i) => { el.textContent = t(this.readouts[i][0]); });
+      if (this.toastSource) $('toast').textContent = t(this.toastSource);
+      applyDock();
+      this.eventsFor = NaN;
+      this.frame = 0;
+      this.update(0); // Refresh even while paused or requestAnimationFrame is throttled.
+    });
   }
 
   private toast(text: string): void {
     const el = $('toast');
-    el.textContent = text;
+    this.toastSource = text;
+    el.textContent = t(text);
     el.hidden = false;
     window.clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => (el.hidden = true), 4500);
@@ -236,29 +283,30 @@ export class Panel {
     const c = s.controls;
     const p = s.boiler.gaugePressure / KGF_CM2;
     const moving = Math.abs(s.omega) > 0.5;
-    if (s.fuel <= 0) return '燃料耗尽：点“加燃料”，再重新点火。';
+    if (s.fuel <= 0) return t('燃料耗尽：点“加燃料”，再重新点火。');
     if (!s.lit) {
-      if (p > 1) return '火已熄灭：燃料阀开到约 50% 后点“点火”；也可以靠余压继续行驶。';
-      if (c.fuelValve <= 0) return '第 1 步：把“燃料阀”开到约 50%。';
-      if (!c.fan) return '第 2 步：勾选“烟囱通风机”（冷态没有蒸汽，靠它抽风）。';
-      return '第 3 步：点“点火”。';
+      if (p > 1) return t('火已熄灭：燃料阀开到约 50% 后点“点火”；也可以靠余压继续行驶。');
+      if (c.fuelValve <= 0) return t('第 1 步：把“燃料阀”开到约 50%。');
+      if (!c.fan) return t('第 2 步：勾选“烟囱通风机”（冷态没有蒸汽，靠它抽风）。');
+      return t('第 3 步：点“点火”。');
     }
-    if (s.boiler.glass < 0.15) return '水位过低：关小“旁通阀”让轴泵给水，或点“手摇泵”。';
-    if (p < 1.5) return c.fan || c.blower > 0 ? '升压中…到 1.5–2 kgf/cm² 后改用通风阀。嫌慢可把时间倍率调到 20×。' : '火力很弱：冷态请勾选“烟囱通风机”抽风。';
-    if (c.fan) return '第 4 步：取消“烟囱通风机”，把“通风阀”开到约 30%，继续升压到 4 kgf/cm²。';
+    if (s.boiler.glass < 0.15) return t('水位过低：关小“旁通阀”让轴泵给水，或点“手摇泵”。');
+    if (p < 1.5) return t(c.fan || c.blower > 0 ? '升压中…到 1.5–2 kgf/cm² 后改用通风阀。嫌慢可把时间倍率调到 20×。' : '火力很弱：冷态请勾选“烟囱通风机”抽风。');
+    if (c.fan) return t('第 4 步：取消“烟囱通风机”，把“通风阀”开到约 30%，继续升压到 4 kgf/cm²。');
     if (!moving) {
-      if (p < 3) return '继续升压到 3–4 kgf/cm²（通风阀约 30%）。';
-      if (c.regulator <= 0) return '第 5 步：勾选“气缸排水阀”，再慢慢打开“加减阀”（约 25–30%）起步。';
+      if (p < 3) return t('继续升压到 3–4 kgf/cm²（通风阀约 30%）。');
+      if (c.regulator <= 0) return t('第 5 步：勾选“气缸排水阀”，再慢慢打开“加减阀”（约 25–30%）起步。');
       const wall = Math.min(s.engine.wallT[0], s.engine.wallT[1]) - 273.15;
-      if (wall < 95) return `暖缸中：蒸汽正在冷气缸里凝结（缸壁 ${wall.toFixed(0)} °C），热起来后才有力起步，约需半分钟；排水阀保持打开。`;
-      return '加减阀再开大一点；若停在死点附近，可点“推 →”。';
+      if (wall < 95) return t('暖缸中：蒸汽正在冷气缸里凝结（缸壁 {temperature} °C），热起来后才有力起步，约需半分钟；排水阀保持打开。', { temperature: wall.toFixed(0) });
+      return t('加减阀再开大一点；若停在死点附近，可点“推 →”。');
     }
-    if (c.drains) return '第 6 步：凝水排净后取消“气缸排水阀”。';
-    return '运行中：加减阀控制速度；回动手柄拉向中立可省汽；调“旁通阀”把水位保持在 50% 左右。';
+    if (c.drains) return t('第 6 步：凝水排净后取消“气缸排水阀”。');
+    return t('运行中：加减阀控制速度；回动手柄拉向中立可省汽；调“旁通阀”把水位保持在 50% 左右。');
   }
 
   update(dt: number): void {
     const sim = this.sim;
+    this.phaseBoard.update();
     this.drawPressure();
     this.drawGlass();
     this.drawIndicator();
@@ -267,12 +315,12 @@ export class Panel {
 
     this.readouts.forEach(([, value], i) => (this.cells[i].textContent = value()));
     $('hint').textContent = this.nextStep();
-    const t = Math.floor(sim.time);
-    $('clock').textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')} · ${sim.distance.toFixed(1)} m`;
+    const seconds = Math.floor(sim.time);
+    $('clock').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} · ${sim.distance.toFixed(1)} m`;
     $('warnings').replaceChildren(
       ...sim.warnings().map((w) => {
         const s = document.createElement('span');
-        s.textContent = WARNING_TEXT[w];
+        s.textContent = t(WARNING_TEXT[w]);
         return s;
       }),
     );
@@ -292,7 +340,7 @@ export class Panel {
       $('events').replaceChildren(
         ...rows.map((r) => {
           const tr = document.createElement('tr');
-          for (const text of r) tr.appendChild(document.createElement('td')).textContent = text;
+          for (const text of r) tr.appendChild(document.createElement('td')).textContent = t(text);
           return tr;
         }),
       );
@@ -361,7 +409,7 @@ export class Panel {
     g.fillStyle = '#c9d1d9';
     g.font = '10px system-ui';
     g.textAlign = 'center';
-    g.fillText('水位', w / 2, 10);
+    g.fillText(t('水位'), w / 2, 10, w - 4);
     g.fillText((this.sim.boiler.glass * 100).toFixed(0) + '%', w / 2, h - 3);
   }
 
@@ -393,7 +441,7 @@ export class Panel {
       g.fillText(String(p), x0 - 4, Y(P_ATM + p * KGF_CM2));
     }
     g.textAlign = 'center';
-    g.fillText('气缸容积 →', x0 + w / 2, ch - 7);
+    g.fillText(t('气缸容积 →'), x0 + w / 2, ch - 7);
     g.strokeStyle = '#f0883e';
     g.beginPath();
     g.moveTo(x0, Y(this.sim.boiler.P));

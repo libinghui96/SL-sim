@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import type { LocoSim } from '../sim/loco';
+import { RUNNING_GEAR, pumpPose, pumpStrokeLength, sidePhase } from '../sim/runningGear';
 import type { Vec2 } from '../sim/valveGear';
 import { PART_COLORS, PART_LABELS, type PartName, pressureHue, pressureLevel } from './colors';
+import { PUMP_BODY, pipeCurve, steamNetwork } from './pipeNetwork';
 
 export type ViewMode = 'normal' | 'xray' | 'mech';
 
@@ -18,7 +20,7 @@ export type ViewMode = 'normal' | 'xray' | 'mech';
  * one above the other, are estimates. Visual only: the simulation does not read these numbers.
  */
 export const LAYOUT = {
-  driverX: [0.1034, 0.0517, 0, -0.0517],
+  driverX: RUNNING_GEAR.driverX,
   smallR: 0.0143,
   leadX: 0.185,
   trailX: -0.128,
@@ -56,7 +58,7 @@ export const LAYOUT = {
   cylZ: 0.035,
   tenderDist: 0.315,
   burnerX: -0.082,
-  pumpX: 0.03,
+  pumpX: RUNNING_GEAR.pump.bodyX,
 } as const;
 
 const PISTON_T = 0.005;
@@ -140,8 +142,8 @@ function paint(m: THREE.MeshStandardMaterial, color: number, opacity: number, me
 /** A bar drawn between two points of the side-view plane. */
 class Link {
   readonly mesh: THREE.Mesh;
-  constructor(parent: THREE.Object3D, z: number, height: number, width: number, m: THREE.Material) {
-    this.mesh = box(1, height, width, m);
+  constructor(parent: THREE.Object3D, z: number, height: number, width: number, m: THREE.Material, round = false) {
+    this.mesh = round ? cylX(width / 2, 1, m, 16) : box(1, height, width, m);
     this.mesh.position.z = z;
     parent.add(this.mesh);
   }
@@ -161,6 +163,10 @@ interface Side {
   index: number;
   sign: number;
   wheels: THREE.Object3D[];
+  couplingSegments: Link[];
+  couplingPins: THREE.Mesh[];
+  expansionLink: THREE.Group;
+  joints: { mesh: THREE.Mesh; point: 'crankPin' | 'crosshead' | 'dropPin' | 'eccPin' | 'linkTail' | 'dieBlock' | 'leverTop' | 'leverMid' | 'leverBottom' }[];
   links: Record<LinkName, Link>;
   crosshead: THREE.Mesh;
   piston: THREE.Mesh;
@@ -198,6 +204,8 @@ export class LocoModel {
   readonly whistle = new THREE.Object3D();
   readonly drains: THREE.Object3D[] = [];
   readonly cylX0: number;
+  readonly pipework: ReturnType<typeof steamNetwork>;
+  readonly pump = new THREE.Group();
   explode = 0;
 
   private readonly rw: number;
@@ -225,6 +233,13 @@ export class LocoModel {
   private readonly levelTable = new Float32Array(LEVELS + 1);
   private tenderWater!: THREE.Mesh;
   private tenderFuel!: THREE.Mesh;
+  private pumpEccentric!: THREE.Mesh;
+  private pumpStrap!: THREE.Mesh;
+  private pumpRod!: Link;
+  private pumpRam!: Link;
+  private pumpFork!: THREE.Mesh;
+  private readonly pumpBalls: THREE.Mesh[] = [];
+  private readonly fixedPipes = new THREE.Group();
 
   private readonly steel = solid(0xb9bec4, 0.9, 0.3);
   private readonly brass = solid(0xc9a646, 0.9, 0.3);
@@ -238,6 +253,7 @@ export class LocoModel {
   ) {
     this.rw = sim.params.chassis.wheelDia / 2;
     this.cylX0 = sim.params.gear.conRod + sim.params.gear.pistonRod;
+    this.pipework = steamNetwork(LAYOUT, this.cylX0, sim.params.gear.valveSpindleY);
     // on a circular track the tender sits at a fixed pose relative to the engine
     const a = LAYOUT.tenderDist / trackRadius;
     this.tenderBase = new THREE.Vector3(-trackRadius * Math.sin(a), 0, -trackRadius * (1 - Math.cos(a)));
@@ -328,7 +344,14 @@ export class LocoModel {
   private buildFrame(): void {
     const F = this.group([0, 0, 0]);
     const { dark, steel, brass } = this;
-    for (const s of [1, -1]) at(box(0.385, 0.03, 0.002, dark), 0.045, 0.006, s * 0.0165, F);
+    for (const s of [1, -1]) {
+      at(box(0.385, 0.01, 0.002, dark), 0.045, 0.019, s * 0.0165, F);
+      for (const x of LAYOUT.driverX) {
+        at(box(0.012, 0.013, 0.004, brass), x, 0, s * 0.0165, F);
+        for (const dx of [-0.008, 0.008]) at(box(0.003, 0.025, 0.004, dark), x + dx, 0.003, s * 0.0165, F);
+        for (let leaf = 0; leaf < 3; leaf++) at(box(0.029 - leaf * 0.005, 0.0011, 0.004, steel), x, -0.01 - leaf * 0.0012, s * 0.0165, F);
+      }
+    }
     for (const x of [0.078, -0.025, -0.092]) at(box(0.004, 0.02, 0.033, dark), x, 0.008, 0, F);
     at(box(0.05, 0.012, 0.034, dark), -0.165, 0.016, 0, F);
     at(box(0.004, 0.016, 0.094, dark), 0.238, 0.014, 0, F);
@@ -357,13 +380,42 @@ export class LocoModel {
       this.flames.push(flame);
     }
     this.label('酒精燃烧器（3 根灯芯）', F, bx, 0.012, 0);
-    // axle-driven feed pump and its eccentric
-    at(cylX(0.003, 0.016, brass, 12), LAYOUT.pumpX, -0.004, -0.007, F);
-    at(cylZ(0.006, 0.003, steel, 16), LAYOUT.driverX[1], 0, -0.007, F);
-    this.label('轴动给水泵', F, LAYOUT.pumpX, -0.004, -0.007);
+    this.buildPump(F);
     // displacement lubricator on the front deck
     at(cylY(0.005, 0.012, brass, 12), 0.224, 0.03, 0.012, F);
     this.label('油壶', F, 0.224, 0.038, 0.012);
+  }
+
+  private buildPump(frame: THREE.Group): void {
+    const { bodyX, axisY, z } = RUNNING_GEAR.pump;
+    frame.add(this.pump);
+    this.pump.name = 'axle-pump';
+    const body = this.casing(0xc9a646, 0.7, 0.4);
+    at(cylX(PUMP_BODY.radius, PUMP_BODY.length, body, 20), bodyX, axisY, z, this.pump).name = 'pump-cylinder';
+    at(cylZ(0.0035, PUMP_BODY.crossLength, body, 16), bodyX, axisY, z, this.pump).name = 'pump-valve-chamber';
+    at(box(0.009, 0.002, 0.03, this.dark), bodyX, axisY - 0.006, z, this.pump);
+    const boreRadius = Math.sqrt(this.sim.params.feed.axlePumpPerRev / (pumpStrokeLength() * Math.PI));
+    this.pumpRam = new Link(this.pump, z, 2 * boreRadius, 2 * boreRadius, this.steel, true);
+    this.pumpRam.mesh.name = 'pump-ram';
+    this.pumpRod = new Link(this.pump, z, 0.002, 0.002, this.steel);
+    this.pumpRod.mesh.name = 'pump-rod';
+    this.pumpEccentric = at(cylZ(0.0054, 0.004, this.brass, 24), 0, 0, z, this.pump);
+    this.pumpEccentric.name = 'pump-eccentric';
+    this.pumpStrap = at(new THREE.Mesh(new THREE.TorusGeometry(0.006, 0.0007, 8, 32), this.steel), 0, 0, z, this.pump);
+    this.pumpFork = at(cylZ(0.0025, 0.005, this.steel, 12), 0, 0, z, this.pump);
+    for (const sign of [-1, 1]) {
+      const valveZ = z + sign * PUMP_BODY.valveOffset;
+      at(cylZ(0.0038, 0.001, body, 6), bodyX, axisY, z + sign * PUMP_BODY.crossLength / 2, this.pump);
+      at(new THREE.Mesh(new THREE.TorusGeometry(0.00125, 0.00035, 8, 16), this.brass), bodyX, axisY, valveZ - PUMP_BODY.ballRadius, this.pump);
+      const ball = at(new THREE.Mesh(new THREE.SphereGeometry(PUMP_BODY.ballRadius, 12, 8), this.steel), bodyX, axisY, valveZ, this.pump);
+      ball.name = sign < 0 ? 'pump-inlet-ball' : 'pump-outlet-ball';
+      this.pumpBalls.push(ball);
+      this.label(sign < 0 ? '吸水单向阀' : '出水单向阀', this.pump, bodyX, axisY, valveZ);
+    }
+    this.label('轴动给水泵', this.pump, bodyX, axisY + 0.012, z);
+    for (const [text, anchor] of [['轴泵偏心轮', this.pumpEccentric], ['轴泵连杆', this.pumpRod.mesh], ['轴泵柱塞', this.pumpRam.mesh]] as const) {
+      this.labels.push({ text, anchor, kind: 'mech', side: 0, color: 0xc9a646 });
+    }
   }
 
   private buildCase(): void {
@@ -465,28 +517,23 @@ export class LocoModel {
       this.flueGas.push(order(at(cylX(flueR - 0.0008, barrel, this.flueGasMat, 16), (xt + x1) / 2, flueY, s * flueZ, N), 3));
     }
 
-    // superheater: steam from the upper header runs back down each flue, turns and returns to the lower header
     const pipe = inside(0xdfe5ea, 1);
-    const rs = 0.0011;
-    const xb = x1 - L.shLen;
-    const bend = new THREE.TorusGeometry(sp, rs, 8, 14, Math.PI);
-    for (const s of [1, -1]) {
-      for (const d of [sp, -sp]) order(at(cylX(rs, hx - xb, pipe, 8), (hx + xb) / 2, flueY + d, s * flueZ, N), 4);
-      const u = order(at(new THREE.Mesh(bend, pipe), xb, flueY, s * flueZ, N), 4);
-      u.rotation.z = Math.PI / 2;
+    N.add(this.fixedPipes);
+    for (const run of this.pipework.runs) {
+      const curve = pipeCurve(run.points);
+      const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(8, Math.ceil(curve.getLength() / 0.001)), run.radius, 10), pipe);
+      mesh.name = run.id;
+      order(mesh, 4);
+      this.fixedPipes.add(mesh);
     }
-    for (const d of [sp, -sp]) order(at(cylZ(rs * 1.5, 2 * flueZ + 0.004, pipe, 10), hx, flueY + d, 0, N), 4);
-    // regulator and blower steam are led forward through the boiler to the two unions on the front tube plate
-    order(at(cylX(0.0012, hx - x0 + 0.008, pipe, 8), (hx + x0 - 0.008) / 2, L.steamPipeY, 0, N), 4);
-    order(at(cylY(0.0012, L.steamPipeY - flueY - sp, pipe, 8), hx, (L.steamPipeY + flueY + sp) / 2, 0, N), 4);
-    order(at(cylX(0.001, 0.176 - x0 + 0.008, pipe, 8), (0.176 + x0 - 0.008) / 2, L.blowerPipeY, L.blowerPipeZ, N), 4);
-    // superheater outlet down to the cylinders; blower nozzle and exhaust nozzle under the chimney
-    order(at(cylX(rs, 0.005, pipe, 8), hx + 0.0025, flueY - sp, 0, N), 4);
-    order(at(cylY(rs * 1.3, flueY - sp - 0.026, pipe, 8), hx + 0.005, (flueY - sp + 0.026) / 2, 0, N), 4);
-    order(at(cylY(0.001, 0.011, pipe, 8), 0.176, L.blowerPipeY - 0.0055, L.blowerPipeZ, N), 4);
-    order(at(cylX(0.001, 0.006, pipe, 8), 0.179, 0.046, -0.003, N), 4);
-    order(at(cylY(0.0012, 0.008, pipe, 8), 0.182, 0.05, -0.002, N), 4);
-    order(at(cylY(0.0022, L.blastY - 0.012, inside(0xc9a646, 0.9), 12), L.chimneyX, (L.blastY + 0.012) / 2, 0, N), 4);
+    for (const key of ['inletHeader', 'outletHeader', 'admissionTee', 'leftChest', 'rightChest', 'exhaustTee'] as const) {
+      const p = this.pipework.nodes[key];
+      order(at(new THREE.Mesh(new THREE.SphereGeometry(0.002, 12, 8), pipe), ...p, this.fixedPipes), 4);
+    }
+    for (const [key, radius] of [['blastNozzle', 0.0022], ['blowerNozzle', 0.0011]] as const) {
+      const p = this.pipework.nodes[key];
+      order(at(new THREE.Mesh(new THREE.TorusGeometry(radius, 0.00035, 8, 20), pipe), ...p, this.fixedPipes), 4).rotation.x = Math.PI / 2;
+    }
     // backhead: water glass
     at(cylY(0.0013, 0.016, new THREE.MeshBasicMaterial({ color: 0x9fd3ff }), 8), x0 - 0.004, y, 0.012, N);
 
@@ -530,7 +577,9 @@ export class LocoModel {
     this.label('过热器：两根 U 形管，各插入一根烟管', I, 0.085, flueY + sp, flueZ, true);
     this.label('火室', I, -0.075, 0.04, 0, true);
     this.label('蒸汽干管 / 通风管（穿过锅炉）', I, -0.06, L.steamPipeY, 0, true);
-    this.label('通风喷嘴 / 排汽喷口', I, 0.182, L.blastY, 0, true);
+    this.label('进汽总管', I, hx + 0.005, 0.026, 0, true);
+    this.label('气缸排汽总管', I, L.chimneyX, 0.02, 0, true);
+    this.label('独立通风喷嘴', I, ...this.pipework.nodes.blowerNozzle, true);
   }
 
   private buildCab(): void {
@@ -576,16 +625,31 @@ export class LocoModel {
       const V = this.group([0, 0, s * 0.1]);
 
       const wheels = LAYOUT.driverX.map((x) => this.driver(W, x, s * LAYOUT.wheelZ, r));
+      wheels.forEach((wheel, axle) => { wheel.name = `driver-${index}-${axle}`; });
 
       // cylinder block, valve chest, slide bars, motion bracket
       at(cylX(e.bore / 2 + 0.0035, cylLen, cylMat), x0, 0, z, D);
       at(cylX(e.bore / 2 + 0.0045, 0.0012, steel), x0 + cylLen / 2, 0, z, D);
       at(box(0.032, 0.0095, 0.014, cylMat), x0, g.valveSpindleY, z, D);
+      at(box(0.032, g.valveSpindleY - e.bore / 2, 0.012, cylMat), x0, (g.valveSpindleY + e.bore / 2) / 2 - 0.003, z, D);
       at(box(0.02, 0.012, 0.012, dark), x0, 0.004, s * 0.023, D);
       for (const y of [0.0052, -0.0052]) at(box(0.042, 0.0014, 0.004, steel), g.conRod, y, z, D);
       at(box(0.0015, 0.02, 0.02, dark), pivotX, 0.024, s * 0.027, D);
-      at(cylZ(0.0012, 0.006, steel, 8), pivotX, g.valveSpindleY - g.leverUpper, s * 0.0395, D);
+      at(cylZ(0.0012, 0.006, steel, 8), pivotX, this.sim.gear.pivot.y, s * 0.0395, D);
       const steam = [0, 1].map(() => at(cylX(e.bore / 2 - 0.0004, 1, steamMat(), 24), x0, 0, z, D));
+      for (const end of [0, 1]) {
+        const sign = end === 0 ? 1 : -1;
+        const pz = z + sign * 0.002;
+        const path = pipeCurve([
+          [x0 - sign * 0.0042, g.valveSpindleY - 0.002, pz],
+          [x0 - sign * 0.0042, g.valveSpindleY - 0.006, pz],
+          [x0 + sign * (r + 0.003), e.bore / 2 + 0.001, pz],
+          [x0 + sign * (r + 0.003), e.bore / 2 - 0.001, pz],
+        ], 0.0005);
+        const passage = new THREE.Mesh(new THREE.TubeGeometry(path, 32, 0.0008, 8), steam[end].material);
+        passage.name = `cylinder-passage-${index}-${end}`;
+        D.add(passage);
+      }
       const chestSteam = at(box(0.029, 0.007, 0.011, steamMat()), x0, g.valveSpindleY, z, D);
       this.drains.push(at(new THREE.Object3D(), x0, -e.bore / 2 - 0.005, z, D));
 
@@ -602,10 +666,40 @@ export class LocoModel {
         union: new Link(V, s * 0.0405, 0.002, 0.0015, m.union),
         spindle: new Link(V, z, 0.0015, 0.0015, m.valve),
       };
+      links.coupling.mesh.visible = links.link.mesh.visible = false;
+      for (const [name, link] of Object.entries(links)) link.mesh.name = `motion-${index}-${name}`;
+      const couplingSegments = [0, 1, 2].map(() => new Link(Rods, s * 0.0305, 0.0035, 0.002, m.coupling));
+      couplingSegments.forEach((rod, i) => { rod.mesh.name = `coupling-${index}-${i}`; });
+      const couplingPins = LAYOUT.driverX.map(() => at(cylZ(0.003, 0.004, m.coupling, 16), 0, 0, s * 0.0305, Rods));
+      const expansionLink = new THREE.Group();
+      expansionLink.name = `expansion-link-${index}`;
+      V.add(expansionLink);
+      expansionLink.position.set(this.sim.gear.pivot.x, this.sim.gear.pivot.y, s * 0.0405);
+      // The die slides along the same circular slot used by ValveGear.solve(), not a straight bar.
+      const extent = (g.dieMax + 0.002) / g.radiusRod;
+      for (const offset of [-0.0018, 0.0018]) {
+        const points = Array.from({ length: 41 }, (_, i) => {
+          const a = -extent + 2 * extent * i / 40;
+          return new THREE.Vector3(g.radiusRod * (1 - Math.cos(a)) + offset, g.radiusRod * Math.sin(a), 0);
+        });
+        expansionLink.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 40, 0.0006, 8), m.link));
+      }
+      const tail = new Link(expansionLink, 0, 0.002, 0.002, m.link);
+      tail.set({ x: 0, y: -g.dieMax - 0.002 }, { x: 0, y: -g.linkTail });
+      for (const end of [-1, 1]) at(box(0.004, 0.0012, 0.002, m.link), g.radiusRod * (1 - Math.cos(extent)), end * g.radiusRod * Math.sin(extent), 0, expansionLink);
+      at(cylZ(0.0012, 0.0026, m.link, 16), 0, 0, 0, expansionLink);
+      const joints = (['crankPin', 'crosshead', 'dropPin', 'eccPin', 'linkTail', 'dieBlock', 'leverTop', 'leverMid', 'leverBottom'] as const).map(point => ({
+        point,
+        mesh: at(cylZ(0.0012, 0.009, steel, 10), 0, 0, s * 0.037, V),
+      }));
       const side: Side = {
         index,
         sign: s,
         wheels,
+        couplingSegments,
+        couplingPins,
+        expansionLink,
+        joints,
         links,
         crosshead: at(box(0.008, 0.009, 0.006, m.crosshead), 0, 0, z, D),
         piston: at(cylX(e.bore / 2 - 0.0002, PISTON_T, m.crosshead, 24), 0, 0, z, D),
@@ -615,9 +709,12 @@ export class LocoModel {
         chestSteam,
       };
       this.sides.push(side);
+      side.dieBlock.name = `die-block-${index}`;
+      side.piston.name = `piston-${index}`;
+      side.valve.name = `valve-${index}`;
 
       for (const name of ['coupling', 'mainRod', 'returnCrank', 'eccRod', 'link', 'radiusRod', 'lever', 'union'] as const) {
-        this.labels.push({ text: PART_LABELS[name], anchor: links[name].mesh, kind: 'mech', side: s, color: PART_COLORS[name] });
+        this.labels.push({ text: PART_LABELS[name], anchor: name === 'link' ? expansionLink : name === 'coupling' ? couplingSegments[1].mesh : links[name].mesh, kind: 'mech', side: s, color: PART_COLORS[name] });
       }
       this.labels.push({ text: PART_LABELS.crosshead, anchor: side.crosshead, kind: 'mech', side: s, color: PART_COLORS.crosshead });
       this.labels.push({ text: PART_LABELS.valve, anchor: side.valve, kind: 'mech', side: s, color: PART_COLORS.valve });
@@ -686,6 +783,7 @@ export class LocoModel {
 
   setExplode(e: number): void {
     this.explode = e;
+    this.fixedPipes.visible = e < 0.02;
     for (const p of this.parts) p.group.position.copy(p.base).addScaledVector(p.offset, e);
   }
 
@@ -711,11 +809,15 @@ export class LocoModel {
     for (const w of this.smallWheels) w.rotation.z = roll;
 
     for (const s of this.sides) {
-      const phi = sim.phi + (s.index * Math.PI) / 2;
+      const phi = sidePhase(sim.phi, s.index);
       const pose = sim.gear.solve(phi, sim.controls.reverser);
       const l = s.links;
       for (const w of s.wheels) w.rotation.z = -phi;
       l.coupling.set({ x: dx[0] + pose.crankPin.x, y: pose.crankPin.y }, { x: dx[3] + pose.crankPin.x, y: pose.crankPin.y });
+      s.couplingSegments.forEach((rod, i) => rod.set({ x: dx[i] + pose.crankPin.x, y: pose.crankPin.y }, { x: dx[i + 1] + pose.crankPin.x, y: pose.crankPin.y }));
+      s.couplingPins.forEach((pin, i) => pin.position.set(dx[i] + pose.crankPin.x, pose.crankPin.y, pin.position.z));
+      s.expansionLink.rotation.z = pose.linkAngle;
+      for (const joint of s.joints) joint.mesh.position.set(pose[joint.point].x, pose[joint.point].y, joint.mesh.position.z);
       l.mainRod.set(pose.crankPin, pose.crosshead);
       const px = pose.crosshead.x + g.pistonRod;
       l.pistonRod.set(pose.crosshead, { x: px, y: 0 });
@@ -724,10 +826,10 @@ export class LocoModel {
       l.eccRod.set(pose.eccPin, pose.linkTail);
       const k = (g.dieMax + 0.002) / g.linkTail;
       l.link.set(pose.linkTail, { x: pose.linkPivot.x + (pose.linkPivot.x - pose.linkTail.x) * k, y: pose.linkPivot.y + (pose.linkPivot.y - pose.linkTail.y) * k });
-      l.radiusRod.set(pose.dieBlock, pose.leverMid);
+      l.radiusRod.set(pose.dieBlock, pose.leverTop);
       l.lever.set(pose.leverTop, pose.leverBottom);
       l.union.set(pose.leverBottom, pose.dropPin);
-      l.spindle.set(pose.leverTop, { x: x0 + pose.valve, y: g.valveSpindleY });
+      l.spindle.set(pose.leverMid, { x: x0 + pose.valve, y: g.valveSpindleY });
       s.crosshead.position.x = pose.crosshead.x;
       s.piston.position.x = px;
       s.valve.position.x = x0 + pose.valve;
@@ -751,6 +853,19 @@ export class LocoModel {
       cm.color.setHSL(pressureHue(sim.engine.chestP) / 360, 0.85, 0.55);
       cm.opacity = 0.25 + 0.6 * pressureLevel(sim.engine.chestP);
     }
+
+    const pump = pumpPose(sim.phi, dt === 0 ? 0 : sim.omega);
+    const pp = RUNNING_GEAR.pump;
+    this.pumpEccentric.position.set(pump.eccentric.x, pump.eccentric.y, pp.z);
+    this.pumpEccentric.rotation.z = -pump.phase;
+    this.pumpStrap.position.copy(this.pumpEccentric.position);
+    this.pumpRod.set(pump.eccentric, pump.ram);
+    this.pumpRam.set({ x: pp.bodyX - 0.004, y: pp.axisY }, pump.ram);
+    this.pumpFork.position.set(pump.ram.x, pump.ram.y, pp.z);
+    this.pumpBalls.forEach((ball, i) => {
+      const open = pump.velocity !== 0 && (i === 0 ? !pump.delivering : pump.delivering);
+      ball.position.z = pp.z + (i === 0 ? -1 : 1) * PUMP_BODY.valveOffset + (open ? PUMP_BODY.ballLift : 0);
+    });
 
     // inner boiler: water level, water temperature, steam pressure, boiling
     const Rw = LAYOUT.innerR - 0.0015;

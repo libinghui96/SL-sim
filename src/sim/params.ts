@@ -38,7 +38,7 @@ export interface LocoParams {
     radiusRod: number;
     /** combination lever: valve spindle pin to radius rod pin */
     leverUpper: number;
-    /** combination lever: radius rod pin to union link pin */
+    /** combination lever: valve spindle pin to union link pin */
     leverLower: number;
     unionLink: number;
     /** union link pin on the crosshead drop arm, relative to the crosshead pin */
@@ -134,18 +134,18 @@ export const d51Params: LocoParams = {
     wallLossUA: 0.08, // [E]
   },
   gear: {
-    conRod: 0.105, // [E]
-    pistonRod: 0.048, // [E]
+    conRod: 0.113, // [E] drawing 9 proportions, not a dimensioned measurement
+    pistonRod: 0.040, // [E]
     returnCrankRadius: 0.007, // [M] valve setting, step 2
-    linkTail: 0.016, // [E]
+    linkTail: 0.0155, // [E]
     dieMax: 0.0055, // [E]
-    radiusRod: 0.045, // [E]
-    leverUpper: 0.0027, // [E]
-    leverLower: 0.022, // [E]
+    radiusRod: 0.0565, // [E]
+    leverUpper: 0.0035, // [E]
+    leverLower: 0.025, // [E]
     unionLink: 0.014, // [E]
     dropArmX: 0, // [E]
-    dropArmY: -0.0117, // [E]
-    valveSpindleY: 0.013, // [E]
+    dropArmY: -0.0058, // [E]
+    valveSpindleY: 0.0192, // [E]
   },
   boiler: {
     volume: 380e-6, // [E]

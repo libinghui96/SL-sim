@@ -50,7 +50,7 @@ describe('Walschaerts valve gear', () => {
         const p = gear.solve((d * Math.PI) / 180, u);
         expect(dist(p.linkTail, p.eccPin)).toBeCloseTo(gear.eccRod, 9);
         expect(dist(p.linkTail, p.linkPivot)).toBeCloseTo(g.linkTail, 9);
-        expect(dist(p.leverMid, p.dieBlock)).toBeCloseTo(g.radiusRod, 9);
+        expect(dist(p.leverTop, p.dieBlock)).toBeCloseTo(g.radiusRod, 9);
         expect(dist(p.leverBottom, p.dropPin)).toBeCloseTo(g.unionLink, 9);
         expect(dist(p.crankPin, p.crosshead)).toBeCloseTo(g.conRod, 9);
       }
@@ -59,7 +59,7 @@ describe('Walschaerts valve gear', () => {
 
   test('mid gear gives only lap + lead travel', () => {
     const e = gear.events(0);
-    expect(e.travel).toBeCloseTo((2 * (sim.params.engine.stroke / 2) * g.leverUpper) / g.leverLower, 4);
+    expect(e.travel).toBeCloseTo((sim.params.engine.stroke * g.leverUpper) / (g.leverUpper + g.leverLower), 4);
     expect(e.front.cutoff).toBeLessThan(15);
   });
 

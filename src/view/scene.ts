@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { onLocaleChange, t } from '../i18n';
 import type { LocoSim } from '../sim/loco';
 import { P_ATM } from '../sim/steam';
 import { cssHex } from './colors';
@@ -111,7 +112,8 @@ export class LocoView {
         label.kind === 'mech'
           ? () => this.showLabels && this.mode === 'mech' && (label.side === 0 || label.side === this.camSide)
           : () => this.showLabels && this.mode !== 'mech' && (!label.inner || this.model.internalsVisible);
-      item(label.kind, label.color, label.anchor, wanted).textContent = label.text;
+      // Keep the model's Chinese source intact: translating translated text would break round trips.
+      item(label.kind, label.color, label.anchor, wanted, () => t(label.text)).textContent = t(label.text);
     }
 
     this.heading = this.placeTrain();
@@ -123,6 +125,17 @@ export class LocoView {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+    const refreshLocale = () => {
+      this.renderer.domElement.setAttribute('role', 'img');
+      this.renderer.domElement.setAttribute('aria-label', t('蒸汽机车三维视图'));
+      for (const label of this.labelItems) {
+        if (label.text) label.el.textContent = label.text();
+        label.w = label.h = 0;
+      }
+      this.updateLabels();
+    };
+    refreshLocale();
+    onLocaleChange(refreshLocale);
   }
 
   setView(mode: ViewMode, flow: boolean, labels: boolean): void {
@@ -163,6 +176,7 @@ export class LocoView {
     this.camera.aspect = w / h;
     this.camera.setViewOffset(w, h, 0, this.inset / 2, w, h);
     this.camera.updateProjectionMatrix();
+    for (const label of this.labelItems) label.w = label.h = 0;
   }
 
   private makePuffTexture(): THREE.Texture {
@@ -290,6 +304,11 @@ export class LocoView {
     const placed = this.placed;
     placed.length = 0;
     for (const it of this.labelItems) {
+      const maxWidth = `${Math.max(40, Math.min(320, this.labelWidth))}px`;
+      if (it.el.style.maxWidth !== maxWidth) {
+        it.el.style.maxWidth = maxWidth;
+        it.w = 0;
+      }
       const wanted = it.wanted();
       if (wanted) it.anchor.getWorldPosition(p).project(this.camera);
       if (!wanted || p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) {

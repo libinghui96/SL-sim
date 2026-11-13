@@ -34,7 +34,10 @@ body {
   top: 0;
   padding: 0 5px;
   font-size: 11px;
-  white-space: nowrap;
+  box-sizing: border-box;
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
   background: rgba(13, 17, 23, 0.78);
   border-bottom: 2px solid #9ecbff;
@@ -90,13 +93,31 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+#openPhase {
+  flex-shrink: 0;
+  color: #c6e2ff;
+  border-color: #58a6ff;
+  background: #153b60;
+  white-space: nowrap;
+}
+
+#openPhase:hover {
+  background: #20517c;
+}
+
+#openPhase:focus-visible,
+#phaseBoard:focus-visible {
+  outline: 2px solid #9ecbff;
+  outline-offset: 2px;
+}
+
 #mtabs {
   display: none;
 }
 
 .panel {
   position: fixed;
-  top: 52px;
+  top: calc(var(--top-height, 44px) + 8px);
   bottom: 8px;
   width: 340px;
   box-sizing: border-box;
@@ -138,6 +159,16 @@ body {
   margin-bottom: 6px;
 }
 
+#dock .tabs button {
+  min-width: 0;
+  font-size: 12px;
+}
+
+#dock .scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+
 #dockToggle {
   margin-left: auto;
 }
@@ -145,13 +176,14 @@ body {
 #diagram {
   display: block;
   width: 100%;
+  min-width: 760px;
   height: 268px;
 }
 
 #legend,
 #toast {
   position: fixed;
-  top: 52px;
+  top: calc(var(--top-height, 44px) + 8px);
   left: 356px;
   right: 356px;
   padding: 4px 10px;
@@ -193,7 +225,7 @@ body {
 }
 
 #toast {
-  top: 84px;
+  top: calc(var(--top-height, 44px) + 40px);
   text-align: center;
   background: rgba(154, 52, 18, 0.95);
 }
@@ -203,6 +235,19 @@ body {
   border-left: 3px solid #f0883e;
   background: rgba(240, 136, 62, 0.14);
   border-radius: 4px;
+}
+
+#hint,
+#toast,
+.slider,
+h2 {
+  overflow-wrap: anywhere;
+}
+
+#settings .group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 h2 {
@@ -265,6 +310,19 @@ table {
   font-variant-numeric: tabular-nums;
 }
 
+#readouts {
+  table-layout: fixed;
+}
+
+#readouts td:first-child {
+  width: 43%;
+}
+
+#readouts td,
+#events td {
+  overflow-wrap: anywhere;
+}
+
 td,
 th {
   padding: 1px 4px;
@@ -305,6 +363,7 @@ canvas {
 
 #warnings {
   flex: 1;
+  min-width: 80px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -314,6 +373,284 @@ canvas {
   padding: 2px 6px;
   border-radius: 4px;
   background: #9a3412;
+  overflow-wrap: anywhere;
+}
+
+#phaseBoard {
+  margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid #394858;
+  border-radius: 8px;
+  background: #101820;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+#phaseBoard h3,
+#phaseBoard h4 {
+  margin: 0;
+  font-size: 13px;
+  color: #b6d9ff;
+}
+
+.phase-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.phase-heading > span {
+  color: #b6bdc6;
+  font-size: 11px;
+}
+
+.phase-note,
+.phase-check,
+.phase-caution,
+.phase-evidence {
+  margin: 5px 0;
+}
+
+.phase-note,
+.phase-evidence {
+  color: #b6bdc6;
+  font-size: 11px;
+}
+
+.phase-caution {
+  padding-left: 6px;
+  border-left: 2px solid #e3b341;
+  color: #e8cd90;
+  font-size: 11px;
+}
+
+#phasePositioning {
+  min-width: 0;
+  margin: 7px 0;
+  padding: 5px;
+  border: 1px solid #394858;
+  border-radius: 5px;
+}
+
+#phasePositioning legend {
+  max-width: 100%;
+  padding: 0 3px;
+}
+
+.phase-scrub {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+}
+
+#phaseAngle {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  accent-color: #79b8ff;
+}
+
+.phase-references {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 5px;
+}
+
+#phaseBoard button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px;
+}
+
+#phasePositioning:disabled button,
+#phasePositioning:disabled input {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#phasePositioning:disabled button:hover {
+  background: #2d343c;
+}
+
+#phaseBoard :focus-visible {
+  outline: 2px solid #9ecbff;
+  outline-offset: 2px;
+}
+
+.phase-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.phase-side,
+.phase-pump {
+  min-width: 0;
+  padding: 6px;
+  background: #19232d;
+  border: 1px solid #303d4b;
+  border-radius: 6px;
+}
+
+.phase-side h4,
+.phase-angle {
+  display: block;
+  text-align: center;
+}
+
+#phaseBoard svg {
+  display: block;
+  fill: #9ecbff;
+}
+
+#phaseBoard svg text {
+  fill: #b6bdc6;
+  font: 9px system-ui, sans-serif;
+  text-anchor: middle;
+}
+
+.phase-dial {
+  width: 100%;
+  max-width: 100px;
+  margin: 0 auto;
+}
+
+.phase-rim {
+  fill: #101820;
+  stroke: #73869a;
+  stroke-width: 1;
+}
+
+.phase-axis {
+  fill: none;
+  stroke: #46596c;
+  stroke-width: 1;
+}
+
+.phase-needle {
+  fill: none;
+  stroke: #79b8ff;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.phase-angle {
+  color: #c6e2ff;
+  font-size: 16px;
+}
+
+.phase-values {
+  margin: 5px 0;
+}
+
+.phase-values > div,
+.phase-port {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 5px;
+  margin: 3px 0;
+}
+
+.phase-values dt {
+  color: #b6bdc6;
+}
+
+.phase-values dd {
+  margin: 0 0 0 auto;
+}
+
+.phase-port b,
+.phase-pump b {
+  font-weight: 500;
+  border-radius: 3px;
+  padding: 0 4px;
+  background: #303d4b;
+}
+
+#phaseBoard [data-state='admission'],
+#phaseBoard [data-state='delivery'] {
+  color: #ffe0ad;
+  background: #624121;
+}
+
+#phaseBoard [data-state='exhaust'],
+#phaseBoard [data-state='suction'] {
+  color: #b9e8ff;
+  background: #214859;
+}
+
+.phase-drivers {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  margin-top: 8px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.phase-drivers svg {
+  width: 100%;
+  max-width: 26px;
+  margin: 0 auto;
+}
+
+.phase-main-axle {
+  color: #e8cd90;
+}
+
+.phase-main-axle .phase-rim {
+  stroke: #e8cd90;
+}
+
+.phase-pump {
+  margin-top: 8px;
+}
+
+.phase-pump-pose {
+  width: 100%;
+  max-width: 230px;
+  margin: 0 auto;
+}
+
+.phase-pump-body {
+  fill: #624121;
+  stroke: #d3a56c;
+}
+
+.phase-pump-rod,
+.phase-pump-ram {
+  fill: none;
+  stroke: #a6b6c8;
+  stroke-width: 3;
+}
+
+.phase-pump-ram {
+  stroke: #d3a56c;
+  stroke-width: 5;
+}
+
+.phase-pump meter {
+  display: block;
+  width: 100%;
+  height: 10px;
+  accent-color: #79b8ff;
+}
+
+.phase-residual[data-error='true'] {
+  color: #ff928b;
+}
+
+.phase-evidence {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #394858;
 }
 
 /*
@@ -348,6 +685,7 @@ canvas {
   }
 
   #top strong {
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -355,6 +693,10 @@ canvas {
 
   #clock {
     white-space: nowrap;
+  }
+
+  #openPhase {
+    padding: 4px 8px;
   }
 
   #mtabs {
@@ -448,11 +790,12 @@ canvas {
     flex: 1;
     min-height: 0;
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto;
   }
 
   #diagram {
-    min-width: 700px;
+    min-width: 760px;
+    min-height: 244px;
     height: 100%;
   }
 
@@ -471,7 +814,7 @@ canvas {
   }
 
   #legend {
-    top: 40px;
+    top: calc(var(--top-height, 44px) + 8px);
   }
 
   #legend .tip {
